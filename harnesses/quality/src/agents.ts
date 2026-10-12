@@ -105,26 +105,69 @@ export class RoleAgent {
     }, 20_000).unref();
   }
 
-  private async send(text: string, customTools: Record<string, SDKCustomTool>): Promise<RunResult> {
+  // A run that streams nothing for `heartbeat.inactivity_minutes` is cancelled and the message re-sent,
+  // so a stalled model request does not consume the whole run timeout.
+  private async send(text: string, customTools: Record<string, SDKCustomTool>): Promise<void> {
+    const { inactivity_minutes, restarts } = this.ctx.config.heartbeat;
+    for (let attempt = 0; ; attempt++) {
+      const message = attempt === 0 ? text
+        : `Your previous attempt at this message stalled and was cancelled. Anything you did in it may be lost. Do the task below in full.\n\n${text}`;
+      try {
+        await this.sendOnce(message, customTools);
+        return;
+      } catch (e) {
+        if (!(e instanceof StalledError)) throw e;
+        if (this.acceptedInRun) return;
+        if (attempt >= restarts)
+          throw new HarnessError(`${this.role} run ${e.runId} sent nothing for ${inactivity_minutes} minutes, and ${restarts} restart(s) also stalled.`, 2);
+        log(`[${this.role}] run ${e.runId} sent nothing for ${inactivity_minutes} minutes; cancelled and re-sending (restart ${attempt + 1}/${restarts})`);
+      }
+    }
+  }
+
+  private async sendOnce(text: string, customTools: Record<string, SDKCustomTool>): Promise<RunResult> {
+    let lastActivity = Date.now();
+    const touch = () => { lastActivity = Date.now(); };
+    const tools = Object.fromEntries(Object.entries(customTools).map(([name, tool]) => [name, {
+      ...tool,
+      execute: async (...args: Parameters<SDKCustomTool["execute"]>) => {
+        touch();
+        try { return await tool.execute(...args); } finally { touch(); }
+      },
+    }]));
     const run = await withStartupRetries(this.role, this.ctx.config.retries.startup, () =>
-      this.agent.send(text, { local: { customTools } }));
+      this.agent.send(text, { local: { customTools: tools } }));
     this.currentRun = run;
     this.acceptedInRun = false;
+    const started = Date.now();
     log(`[${this.role}] run ${run.id} started`);
-    const streaming = this.pipe(run.stream()).catch(() => undefined);
+    const streaming = this.pipe(run.stream(), touch).catch(() => undefined);
     const minutes = this.ctx.config.timeouts_minutes[this.role];
+    const idleMs = this.ctx.config.heartbeat.inactivity_minutes * 60_000;
     let timer: NodeJS.Timeout | undefined;
+    let watchdog: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new HarnessError(`${this.role} run ${run.id} exceeded ${minutes} minutes.`, 2)), minutes * 60_000);
     });
+    const stalled = new Promise<never>((_, reject) => {
+      watchdog = setInterval(() => { if (Date.now() - lastActivity > idleMs) reject(new StalledError(run.id)); }, Math.min(15_000, idleMs));
+    });
     let result: RunResult;
     try {
-      result = await Promise.race([run.wait(), timeout]);
+      result = await Promise.race([run.wait(), timeout, stalled]);
     } catch (e) {
       if (run.supports("cancel")) await run.cancel().catch(() => undefined);
+      if (e instanceof StalledError) {
+        const final = await Promise.race([run.wait().catch(() => undefined), sleep(10_000).then(() => undefined)]);
+        this.ctx.onTurn({
+          role: this.role, step: this.step, agent_id: this.agent.agentId, run_id: run.id, status: "stalled",
+          duration_ms: Date.now() - started, usage: final?.usage, at: now(),
+        });
+      }
       throw e;
     } finally {
       clearTimeout(timer);
+      clearInterval(watchdog);
     }
     await streaming;
     this.ctx.afterRun(this.role);
@@ -138,8 +181,9 @@ export class RoleAgent {
     return result;
   }
 
-  private async pipe(events: AsyncGenerator<SDKMessage, void>): Promise<void> {
+  private async pipe(events: AsyncGenerator<SDKMessage, void>, onEvent: () => void): Promise<void> {
     for await (const event of events) {
+      onEvent();
       fs.appendFileSync(this.ctx.eventLog, JSON.stringify({ at: now(), role: this.role, step: this.step, event }) + "\n");
       if (event.type === "tool_call" && event.status === "running") {
         const args = JSON.stringify(event.args ?? {});
@@ -152,6 +196,14 @@ export class RoleAgent {
 
   async dispose(): Promise<void> {
     await this.agent[Symbol.asyncDispose]().catch(() => undefined);
+  }
+}
+
+class StalledError extends Error {
+  readonly runId: string;
+  constructor(runId: string) {
+    super(`run ${runId} stalled`);
+    this.runId = runId;
   }
 }
 

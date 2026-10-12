@@ -19,6 +19,7 @@ export interface Config {
   debate: { max_rounds: number; max_challenges_per_round: number; medium_low_sample_rate: number; material_severity: Severity };
   retries: { validation: number; startup: number; rejections_per_turn: number };
   timeouts_minutes: Record<Role, number>;
+  heartbeat: { inactivity_minutes: number; restarts: number };
   git: { host: string; remote: string; base_branch: string | null; pr_repo: string | null };
   work_dir: string | null;
   analysis: string;

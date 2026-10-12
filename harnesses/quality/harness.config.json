@@ -8,6 +8,7 @@
   "debate": { "max_rounds": 3, "max_challenges_per_round": 15, "medium_low_sample_rate": 0.25, "material_severity": "medium" },
   "retries": { "validation": 2, "startup": 3, "rejections_per_turn": 6 },
   "timeouts_minutes": { "analyst": 45, "doubter": 30, "judge": 20, "matcher": 5 },
+  "heartbeat": { "inactivity_minutes": 5, "restarts": 2 },
   "git": { "host": "github", "remote": "origin", "base_branch": null, "pr_repo": null },
   "work_dir": null,
   "analysis": "solid",

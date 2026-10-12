@@ -250,6 +250,7 @@ The skill keeps working standalone; the harness uses the new options.
 
 - **Startup failures** (`CursorAgentError`): retry only when `isRetryable`, with backoff; otherwise fail the step with exit code 1.
 - **Run failures** (`result.status === "error"`): fail the step with exit code 2; the transcript id is logged in the manifest.
+- **Stalled runs:** a run that streams no events (and runs no harness tool) for `heartbeat.inactivity_minutes` is cancelled and its message re-sent, up to `heartbeat.restarts` times; then the step fails. The stalled attempt is recorded in the manifest with status `stalled`. The model emits nothing while it writes a tool call's arguments, so the limit must exceed the longest submission (about 3 minutes for a 94-finding review). The per-run timeout still applies to each attempt.
 - **Validation failures:** the submit tool returns the problems in the same turn, up to `rejections_per_turn` times; if the turn ends without an accepted submission, the agent is re-prompted up to `retries.validation` times, then the step fails. Once a submission is accepted, the agent's run is cancelled after a short grace period if it keeps working; nothing it does afterwards is used.
 - **Resume:** `npm run quality -- resume <run-id> --repo <path>` reloads the manifest, including the original `--set` overrides, and continues from the first step not marked `done`. The debate state is rebuilt by replaying the saved review, round files, and verdicts, so a resumed run reaches exactly the decisions the original would have. Agents are recreated; every prompt names the files from earlier steps, so conversation continuity is not required.
 - **Logging:** every agent run is recorded in the manifest (agent id, run id, status, duration, token usage), and the full event stream goes to `events.jsonl` in the work directory, which is not committed.
@@ -268,6 +269,7 @@ Three layers, later ones overriding earlier ones:
   "debate": { "max_rounds": 3, "max_challenges_per_round": 15, "medium_low_sample_rate": 0.25, "material_severity": "medium" },
   "retries": { "validation": 2, "startup": 3, "rejections_per_turn": 6 },
   "timeouts_minutes": { "analyst": 45, "doubter": 30, "judge": 20, "matcher": 5 },
+  "heartbeat": { "inactivity_minutes": 5, "restarts": 2 },
   "git": { "host": "github", "remote": "origin", "base_branch": null, "pr_repo": null },
   "work_dir": null,
   "analysis": "solid",
