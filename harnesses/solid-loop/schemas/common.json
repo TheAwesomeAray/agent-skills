@@ -1,0 +1,43 @@
+{
+  "definitions": {
+    "severity": { "enum": ["low", "medium", "high", "critical"] },
+    "evidence_item": {
+      "type": "object",
+      "required": ["file"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1, "description": "Path relative to the repository root, forward slashes" },
+        "line": { "type": "integer", "minimum": 1 },
+        "note": { "type": "string", "description": "What this line shows" }
+      }
+    },
+    "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/evidence_item" } },
+    "evidence_optional": { "type": "array", "items": { "$ref": "#/definitions/evidence_item" } },
+    "added_finding": {
+      "type": "object",
+      "required": ["principle", "severity", "title", "type", "file", "details"],
+      "properties": {
+        "id": { "type": "string", "description": "Only set to reuse an existing register item id" },
+        "principle": { "enum": ["srp", "ocp", "lsp", "isp", "dip"] },
+        "severity": { "$ref": "#/definitions/severity" },
+        "title": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1, "description": "Fully qualified type, namespace, or project the finding is about" },
+        "file": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 1 },
+        "details": { "type": "string", "minLength": 1 },
+        "recommendation": { "type": "string" },
+        "evidence": { "$ref": "#/definitions/evidence_optional" }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": { "enum": ["keep", "dismiss", "adjust", "add", "none"], "description": "keep = metric severity; adjust needs severity; add needs finding (target null); none = no disposition change" },
+        "severity": { "$ref": "#/definitions/severity" },
+        "reason": { "type": "string" },
+        "recommendation": { "type": "string" },
+        "finding": { "$ref": "#/definitions/added_finding" }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "required": ["round", "checked_and_sound", "challenges"],
+  "properties": {
+    "round": { "type": "integer", "minimum": 1 },
+    "checked_and_sound": { "type": "array", "items": { "type": "string" }, "description": "Ids you read the code for and agree with" },
+    "challenges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["challenge_id", "target", "type", "claim", "proposed_outcome", "evidence"],
+        "properties": {
+          "challenge_id": { "type": "string", "pattern": "^R[0-9]+-C[0-9]{2}$" },
+          "target": { "type": ["string", "null"], "description": "Finding id, or null for a missed violation" },
+          "type": { "enum": ["disposition", "missed", "severity", "recommendation", "process"] },
+          "claim": { "type": "string", "minLength": 1 },
+          "proposed_outcome": { "$ref": "common.json#/definitions/outcome" },
+          "evidence": { "$ref": "common.json#/definitions/evidence" }
+        }
+      }
+    }
+  }
+}

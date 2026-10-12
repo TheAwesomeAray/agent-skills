@@ -4,6 +4,7 @@
 # Analyzer output when a skill is run against this repo
 .solid-analysis/
 
+node_modules/
 bin/
 obj/
 .vs/

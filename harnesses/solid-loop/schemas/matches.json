@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "required": ["matches"],
+  "properties": {
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "match", "reason"],
+        "properties": {
+          "finding_id": { "type": "string" },
+          "match": { "type": "string", "description": "An existing register item id, or \"new\"" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

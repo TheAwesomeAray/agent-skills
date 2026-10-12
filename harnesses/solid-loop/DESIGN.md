@@ -1,6 +1,6 @@
 # SOLID analysis loop: design
 
-Status: draft for review. Covers the analysis loop (analyze, debate, judge, update the technical debt register). The execution loop that changes code is out of scope except for the interface it will use.
+Status: implemented in `src/` (first version). Covers the analysis loop (analyze, debate, judge, update the technical debt register). The execution loop that changes code is out of scope except for the interface it will use.
 
 ## Contents
 1. Decisions
@@ -65,13 +65,13 @@ The run id is the UTC timestamp plus the short commit SHA, e.g. `2026-10-12T1633
 
 | # | Step | Who | Output |
 |---|---|---|---|
-| 0 | **Preflight.** Resolve the base branch (the remote's default branch unless `git.base_branch` is set); the checkout is clean and on it; fetch; check the push target (section 6); create branch `agent-runs/solid/<run-id>`; create a disposable worktree at that commit for the agents; confirm the configured models exist (`Cursor.models.list`) | code | `manifest.json` |
+| 0 | **Preflight.** Check the push target (section 6); confirm the configured models exist (`Cursor.models.list`); fetch; resolve the base branch (the remote's default branch unless `git.base_branch` is set) and analyze the remote's head of it, not the local checkout. Create two worktrees under the work directory: `analysis/` (detached, for the analyzer and agents) and `branch/` (new branch `agent-runs/solid/<run-id>`, where the register is written and committed). The user's own checkout is never touched | code | `manifest.json` |
 | 1 | **Analyze.** Run the configured analyzer (for SOLID: `solid-analyzer.cs analyze`) | code | `metrics.json` |
 | 2 | **Carry forward.** Match findings to the register by stable id. Findings already `accepted` or `dismissed` are marked carried-forward and skip review, unless their severity rose | code | `carry-forward.json` |
 | 3 | **Analyst review.** Review the remaining findings per the skill; add findings the metrics missed | analyst | `review.json` |
 | 4 | **Debate**, up to 3 rounds: doubter challenges, analyst responds, orchestrator applies concessions and revisions. Stops early when no challenge is open | doubter, analyst | `debate/round-N.challenges.json`, `debate/round-N.responses.json` |
 | 5 | **Judge.** Rule on challenges still open after the last round | judge | `verdicts.json` |
-| 6 | **Assemble.** Merge review, responses, and verdicts into the final review; render the report | code | `final-review.json`, `SOLID-RISK-PROFILE.md` |
+| 6 | **Assemble.** Replay review, responses, and verdicts into the final decisions; the analyst rewrites the executive summary and recommendations to match them; render the report | code + analyst | `final-review.json`, `SOLID-RISK-PROFILE.md` |
 | 7 | **Reconcile.** Compute register changes. Match review-added findings to existing items (matcher), then apply the reconciliation rules (section 7) | code + matcher | `register-changes.json`, updated `.tech-debt/items/`, `TECH-DEBT.md` |
 | 8 | **Propose.** Commit the run folder and register changes on the run branch, push to the target repo's remote, open a PR into the base branch with a summary of counts, new/resolved/reopened items, and every judged dispute | code | PR |
 
@@ -82,6 +82,8 @@ The PR target repo and base branch are always passed explicitly (`git.pr_repo`, 
 ## 4. Agent roles
 
 The SDK does not load Cursor skills or settings by default (`settingSources: []`), so the orchestrator builds every prompt explicitly from versioned prompt files plus the skill's `SKILL.md` and `references/criteria.md`.
+
+Every agent is created with only read-only tools (`tools: ["read", "grep", "glob", "ls", "mcp"]`) and hands its output over by calling a submit tool the orchestrator provides for that turn (`customTools`, e.g. `submit_review`). The tool's callback runs the schema and semantic checks and returns any problems to the agent inside the same turn, so most fixes happen without a new prompt. Agents write no files at all.
 
 ### Analyst (Claude Opus, one durable agent per run)
 
@@ -105,7 +107,7 @@ Durable across rounds so it remembers what it challenged and does not re-raise s
 
 ### Judge (Claude Opus, fresh one-shot per run)
 
-Started with `Agent.prompt` with no prior context, so it has not seen either side's reasoning develop. It receives only the open disputes: the original decision, every challenge and response, and the cited evidence. For each dispute it rules `upheld` (analyst stands), `overturned` (doubter's proposal applies), or `modified` (its own outcome), with a rationale and a confidence of `high`, `medium`, or `low`. It can read the code. A side that cited no evidence loses.
+A new agent with no prior context (created for this step and disposed after it), so it has not seen either side's reasoning develop. It receives only the open disputes: the original decision, every challenge and response, and the cited evidence. For each dispute it rules `upheld` (analyst stands), `overturned` (doubter's proposal applies), or `modified` (its own outcome), with a rationale and a confidence of `high`, `medium`, or `low`. It can read the code. A side that cited no evidence loses.
 
 ### Matcher (cheap model, one-shot, only when needed)
 
@@ -167,7 +169,7 @@ All files carry `"schema_version"`. Shapes, abbreviated:
 ## 6. Guardrails
 
 - **Evidence is checked mechanically.** Every cited `file` must exist in the worktree and every `line` must be within the file. Failing citations are validation errors, so an agent cannot win with invented evidence.
-- **Analysis agents cannot change code.** The SDK has no read-only mode, so all four agents run in a disposable worktree at the analyzed commit. Agents write their outputs to a scratch directory outside the worktree (an absolute path given in the prompt). After every agent run the orchestrator checks `git status --porcelain` in the worktree; any change is discarded, logged in the manifest, and fails the step.
+- **Analysis agents cannot change code.** Agents get no edit, write, delete, or shell tools, and they run in a disposable worktree at the analyzed commit. As a second line of defense, after every agent run the orchestrator checks `git status --porcelain` in that worktree; any change is discarded and fails the step.
 - **No agent writes to `.tech-debt/`.** Only the register module does.
 - **Pushes go only where config says.** Preflight checks that `origin` points to the configured `pr_repo` (or that `pr_repo` is unset). If an `upstream` remote exists, as in a fork, preflight requires its push URL to be disabled and refuses to run otherwise. The PR target is always passed explicitly.
 - **Bounded cost.** Hard caps: 3 debate rounds, 15 challenges per round, 2 validation retries per step, and a per-agent-run timeout, all in config.
@@ -211,6 +213,10 @@ Line numbers and file paths are excluded because ordinary edits and file moves c
 | `accepted` / `dismissed` | present, same or lower severity | `carry`: no review, `last_seen_run` updated |
 | `accepted` / `dismissed` | present, higher severity | re-enters review in step 3; outcome decides |
 | `resolved` | present | `reopen` |
+| `fixed-pending-verification` | present, and the analyzed commit includes the fix commit | back to `open`: the fix did not remove the finding |
+| `accepted` | absent | `propose-resolved` |
+
+These rules apply as written to metric findings. Review-added items have no metric that can report them absent, so the analyst re-verifies each active one during review (`register_checks` in `review.json`, `present` or `fixed` with evidence). An item is resolved only when the analyst reports it `fixed`; it is never resolved just because nobody re-reported it. People set `accepted` with `accept <id> --reason`; no agent does.
 
 Every change appends to the item's `history` list (never edited), so each item tells its own story.
 
@@ -221,14 +227,14 @@ Every change appends to the item's `history` list (never edited), so each item t
 - Cannot set `resolved`. The next analysis run does that.
 - Compares the item's `last_seen_run` commit with the current code and re-checks the finding if the file has changed since.
 
-## 8. Analyzer changes required
+## 8. Analyzer changes (done)
 
-Changes to `evaluating-solid-principles/scripts/solid-analyzer.cs`:
+Changes made to `evaluating-solid-principles/scripts/solid-analyzer.cs`:
 
 1. **Stable ids.** Replace positional `SRP-001` ids with the hash ids above. The report keeps a short display label for readability.
 2. **Carry-forward input.** `analyze --register <dir>` marks findings already `accepted`/`dismissed`, so the analyst skips them.
 3. **Review format.** Accept stable ids in `reviewed`, and an optional `evidence` array on every decision.
-4. **False-positive fixes from the first real-world run.** Count a class as a service only if one of its interfaces is used as a constructor parameter somewhere in the repo. Count only interface or service parameters as constructor dependencies. Count property access in LCOM.
+4. **False-positive fixes from the first real-world run.** Count a class as a service only if one of its interfaces is used as a constructor parameter somewhere in the repo (or its name has a service suffix). Count only interface or service parameters as constructor dependencies. LCOM counts auto-properties that some method uses, and credits a method that reads a computed property with the state behind it.
 
 The skill keeps working standalone; the harness uses the new options.
 
@@ -236,9 +242,9 @@ The skill keeps working standalone; the harness uses the new options.
 
 - **Startup failures** (`CursorAgentError`): retry only when `isRetryable`, with backoff; otherwise fail the step with exit code 1.
 - **Run failures** (`result.status === "error"`): fail the step with exit code 2; the transcript id is logged in the manifest.
-- **Validation failures:** up to 2 retries with the specific errors, then fail.
-- **Resume:** `npm run solid -- --resume <run-id>` reloads the manifest and continues from the first step not marked `done`. Agents are recreated with their prior outputs in the prompt; conversation continuity across a crash is not required.
-- **Logging:** `agent.agentId` and `run.id` are written to the manifest right after each `send`, before streaming.
+- **Validation failures:** the submit tool returns the problems in the same turn, up to `rejections_per_turn` times; if the turn ends without an accepted submission, the agent is re-prompted up to `retries.validation` times, then the step fails.
+- **Resume:** `npm run solid -- resume <run-id> --repo <path>` reloads the manifest and continues from the first step not marked `done`. The debate state is rebuilt by replaying the saved review, round files, and verdicts, so a resumed run reaches exactly the decisions the original would have. Agents are recreated; every prompt names the files from earlier steps, so conversation continuity is not required.
+- **Logging:** every agent run is recorded in the manifest (agent id, run id, status, duration, token usage), and the full event stream goes to `events.jsonl` in the work directory, which is not committed.
 
 ## 10. Configuration
 
@@ -252,20 +258,24 @@ Three layers, later ones overriding earlier ones:
 {
   "models": { "analyst": "claude-opus-5-5", "doubter": "claude-sonnet-5-5", "judge": "claude-opus-5-5", "matcher": "composer-2.5" },
   "debate": { "max_rounds": 3, "max_challenges_per_round": 15, "medium_low_sample_rate": 0.25 },
-  "retries": { "validation": 2, "startup": 3 },
-  "timeouts_minutes": { "analyst": 30, "doubter": 20, "judge": 15, "matcher": 5 },
-  "git": { "host": "github", "base_branch": null, "pr_repo": null },
+  "retries": { "validation": 2, "startup": 3, "rejections_per_turn": 6 },
+  "timeouts_minutes": { "analyst": 45, "doubter": 30, "judge": 20, "matcher": 5 },
+  "git": { "host": "github", "remote": "origin", "base_branch": null, "pr_repo": null },
+  "work_dir": null,
+  "analysis": "solid",
   "analyzers": {
     "solid": {
-      "command": ["dotnet", "run", "{skill}/scripts/solid-analyzer.cs", "--", "analyze", "{worktree}", "--out", "{out}"],
       "skill": "../../evaluating-solid-principles",
-      "id_prefix": "solid"
+      "id_prefix": "solid",
+      "references": ["SKILL.md", "references/criteria.md"],
+      "analyze": ["dotnet", "run", "{skill}/scripts/solid-analyzer.cs", "--", "analyze", "{worktree}", "--out", "{metrics}", "--register", "{register}"],
+      "report": ["dotnet", "run", "{skill}/scripts/solid-analyzer.cs", "--", "report", "--metrics", "{metrics}", "--review", "{review}", "--out", "{out}"]
     }
   }
 }
 ```
 
-`base_branch: null` means the remote's default branch, and `pr_repo: null` means the repo `origin` points to. Model ids are checked against `Cursor.models.list` at preflight. Analyzer thresholds stay where each analyzer expects them (for SOLID, the target repo's `solid-thresholds.yaml`).
+`base_branch: null` means the remote's default branch, and `pr_repo: null` means the repo the remote points to. `work_dir: null` means `<system temp>/solid-loop`. The analyzer's `report` command doubles as the final validator of every review the analyst submits. CLI overrides use `--set key=value`, e.g. `--set debate.max_rounds=1`. Model ids are checked against `Cursor.models.list` at preflight. Analyzer thresholds stay where each analyzer expects them (for SOLID, the target repo's `solid-thresholds.yaml`).
 
 ## 11. Code layout
 
@@ -273,19 +283,24 @@ Three layers, later ones overriding earlier ones:
 harnesses/solid-loop/
   DESIGN.md
   package.json, tsconfig.json, harness.config.json
-  prompts/              analyst-review.md, analyst-respond.md, doubter.md, judge.md, matcher.md
-  schemas/              challenges, responses, verdicts, manifest, register-item, register-changes (JSON Schema)
+  prompts/              shared-rules, analyst-review, analyst-respond, analyst-summary, doubter, judge, matcher
+  schemas/              common, review, challenges, responses, verdicts, summary, matches, register-item (JSON Schema)
   src/
-    cli.ts              entry point: run, resume, claim, mark-fixed
-    orchestrator.ts     step sequencing and manifest
-    steps/              one module per lifecycle step
-    agents.ts           SDK wrapper: create/send/prompt, timeouts, error handling, disposal
+    cli.ts              entry point: run, resume, claim, mark-fixed, accept
+    orchestrator.ts     preflight, step sequencing, resume
+    context.ts          run paths, manifest, agent lifecycle, worktree guard
+    steps/              review.ts (analyze, carry-forward, review), debate.ts (debate, judge), finish.ts (assemble, reconcile, propose)
+    agents.ts           SDK wrapper: read-only tools, submit tools, timeouts, retries, disposal
+    decisions.ts        current decisions and how outcomes change them
+    debate.ts           applying rounds, replaying saved files
     validate.ts         schema checks plus evidence checks
-    register/           ids, reconcile, apply, render TECH-DEBT.md
-    git.ts              worktree, branch, commit
+    register/           store, reconcile, render TECH-DEBT.md
+    git.ts              worktrees and remotes
     hosts/              host interface; github.ts (gh CLI) first
-    analyzers.ts        runs the configured analyzer command and checks its metrics file
+    analyzer.ts         runs the configured analyze and report commands
 ```
+
+Requires Node 24 or later (TypeScript runs directly through Node's type stripping) and `CURSOR_API_KEY`. Install with `npm install` in this folder.
 
 ## 12. Deferred
 
@@ -294,4 +309,4 @@ harnesses/solid-loop/
 - Doubter challenges to thresholds and config.
 - Additional analyzers (other languages or other analysis types). The analyzer contract and per-analyzer id prefixes already allow them.
 - Host implementations beyond GitHub.
-- Cost reporting per run.
+- Dollar cost per run (token usage is already recorded per agent run).

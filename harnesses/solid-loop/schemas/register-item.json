@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "required": ["schema_version", "id", "analysis", "source", "status", "severity", "principle", "title", "type", "file", "details", "first_seen", "last_seen", "history"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z]+-[0-9a-f]{6,8}$" },
+    "analysis": { "type": "string" },
+    "source": { "enum": ["metric", "review"] },
+    "status": { "enum": ["open", "accepted", "dismissed", "in-progress", "fixed-pending-verification", "resolved", "reopened"] },
+    "severity": { "$ref": "common.json#/definitions/severity" },
+    "principle": { "type": "string" },
+    "criterion": { "type": ["string", "null"] },
+    "title": { "type": "string" },
+    "type": { "type": "string" },
+    "file": { "type": "string" },
+    "line": { "type": "integer" },
+    "details": { "type": "string" },
+    "history": {
+      "type": "array",
+      "items": { "type": "object", "required": ["at", "change"], "properties": { "at": { "type": "string" }, "change": { "type": "string" } } }
+    }
+  }
+}
