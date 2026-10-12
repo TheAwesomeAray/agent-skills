@@ -15,7 +15,7 @@ How to judge each metric finding, which false positives to dismiss, and what to 
 
 ## Scope
 
-Every check below is about one type and its members, or the dependencies one type takes on another. A finding names a class, interface, record, or struct and the `.cs` file that declares it. Project references, layering, solution structure, and other architecture concerns are out of scope: don't investigate them, don't raise or lower a finding because of them, and don't add findings about them. Non-design problems you notice (security, correctness, concurrency, performance) go in `out_of_scope` and don't affect severity.
+Every check below is about one type and its members, or the dependencies one type takes on another. A finding names a class, interface, record, or struct and the `.cs` file that declares it. Project references, layering, solution structure, and other architecture concerns are out of scope: don't investigate them, don't raise or lower a finding because of them, and don't add findings about them. Security, logic bugs, concurrency, performance, and reliability are also out of scope: don't look for them, don't report them, and don't let them change a severity.
 
 ---
 

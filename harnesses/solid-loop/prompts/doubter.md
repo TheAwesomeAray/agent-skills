@@ -41,9 +41,6 @@ Every challenge costs the analyst a turn, so a challenge must change the risk pi
 - replaces a recommendation that is wrong or would not work (`recommendation` with action `none`).
 
 Anything else is rejected when you submit: dismissed to Low, Low to Medium, a right decision with a weak reason, wording. Put those in `notes` (`target`, `note`, optional `evidence`). Notes are kept with the run for people to read; nobody answers them.
-
-Problems that are real but not design-principle violations (security holes, race conditions, logic bugs, performance) go in `out_of_scope`, never into a severity challenge. See the scope rule above.
-
 ## Criteria reference
 
 {{criteria}}

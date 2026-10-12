@@ -1044,11 +1044,7 @@ static class Reporter
         public string? Application;
         public string? ExecutiveSummary;
         public List<string> Recommendations = [];
-        public List<OutOfScope> OutOfScope = [];
     }
-
-    sealed record OutOfScope(string Title, string Category, string? Severity, string Location, string Details, string Source, List<string> Evidence);
-    static readonly string[] OutOfScopeCategories = ["security", "correctness", "concurrency", "performance", "reliability", "other"];
 
     // Optional `evidence: [{file, line, note}]`; files must exist in the analyzed repo and lines must be in range.
     static List<string> ReadEvidence(JsonNode? node, string where, string? repoPath, List<string> errors)
@@ -1183,28 +1179,6 @@ static class Reporter
         {
             foreach (var r in f.Related.Where(r => !allById.ContainsKey(r))) errors.Add($"{f.Label} ({f.Id}): 'related' names unknown finding '{r}'.");
             f.Related = f.Related.Where(allById.ContainsKey).Select(r => allById[r].Label).Distinct().ToList();
-        }
-
-        var outOfScope = root["out_of_scope"] as JsonArray ?? [];
-        for (int i = 0; i < outOfScope.Count; i++)
-        {
-            var item = outOfScope[i] as JsonObject;
-            var where = $"out_of_scope[{i}]";
-            if (item is null) { errors.Add($"{where}: must be an object."); continue; }
-            var title = Json.Str(item["title"]);
-            var category = Json.Str(item["category"])?.ToLowerInvariant();
-            var severity = Json.Str(item["severity"])?.ToLowerInvariant();
-            var file = Json.Str(item["file"]);
-            var details = Json.Str(item["details"]);
-            foreach (var (key, value) in new[] { ("title", title), ("file", file), ("details", details) })
-                if (string.IsNullOrWhiteSpace(value)) errors.Add($"{where}: '{key}' is required.");
-            if (category is null || !OutOfScopeCategories.Contains(category)) errors.Add($"{where}: 'category' must be one of: {string.Join(", ", OutOfScopeCategories)} (got '{category}').");
-            if (severity is not null && !Sev.Valid(severity)) errors.Add($"{where}: 'severity' must be one of: {string.Join(", ", Sev.Ascending)} (got '{severity}').");
-            var line = (int)(Json.Num(item["line"]) ?? 0);
-            var location = string.IsNullOrWhiteSpace(file) ? "" :
-                ReadEvidence(new JsonArray(new JsonObject { ["file"] = file, ["line"] = line }), where, repoPath, errors).FirstOrDefault() ?? "";
-            var evidence = ReadEvidence(item["evidence"], where, repoPath, errors);
-            review.OutOfScope.Add(new OutOfScope(title ?? "", category ?? "other", severity, location, details ?? "", Json.Str(item["source"]) ?? "reviewer", evidence));
         }
         return errors;
     }
@@ -1367,19 +1341,6 @@ static class Reporter
                 }
                 L();
             }
-        }
-
-        if (review.OutOfScope.Count > 0)
-        {
-            L("## Outside SOLID scope");
-            L();
-            L("Real problems found during review that are not design-principle violations (security, correctness, concurrency, ...). They do not count toward the ratings; track them separately.");
-            L();
-            L("| Category | Severity | Issue | Location | Details | Reported by |");
-            L("|---|---|---|---|---|---|");
-            foreach (var o in review.OutOfScope)
-                L($"| {Sev.Title(o.Category)} | {(o.Severity is null ? "" : Sev.Title(o.Severity))} | {Md(o.Title)} | {o.Location} | {Md(o.Details)}{(o.Evidence.Count > 0 ? " Evidence: " + Md(string.Join("; ", o.Evidence)) : "")} | {o.Source} |");
-            L();
         }
 
         var dismissed = all.Where(f => f.Dismissed).ToList();

@@ -30,20 +30,6 @@
       }
     },
     "related": { "type": "array", "items": { "type": "string" }, "description": "Ids of findings about the same root cause; the evidence is counted there, not again here" },
-    "out_of_scope_item": {
-      "type": "object",
-      "required": ["title", "category", "file", "details", "evidence"],
-      "properties": {
-        "title": { "type": "string", "minLength": 1 },
-        "category": { "enum": ["security", "correctness", "concurrency", "performance", "reliability", "other"] },
-        "severity": { "$ref": "#/definitions/severity" },
-        "file": { "type": "string", "minLength": 1 },
-        "line": { "type": "integer", "minimum": 1 },
-        "details": { "type": "string", "minLength": 1 },
-        "evidence": { "$ref": "#/definitions/evidence" }
-      }
-    },
-    "out_of_scope": { "type": "array", "items": { "$ref": "#/definitions/out_of_scope_item" }, "description": "Real problems that are not design-principle violations. They never change SOLID severity." },
     "outcome": {
       "type": "object",
       "required": ["action"],

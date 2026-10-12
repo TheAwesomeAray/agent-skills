@@ -31,7 +31,6 @@
           "evidence": { "$ref": "common.json#/definitions/evidence_optional" }
         }
       }
-    },
-    "out_of_scope": { "$ref": "common.json#/definitions/out_of_scope" }
+    }
   }
 }

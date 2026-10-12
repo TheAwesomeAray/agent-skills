@@ -51,7 +51,7 @@ export async function reconcileStep(ctx: RunContext): Promise<void> {
   for (const item of updated.values()) saveItem(ctx.paths.registerDir, item);
   writeJson(ctx.file("register-changes.json"), { schema_version: 1, run_id: ctx.runId, matches: Object.fromEntries(matches), changes });
   writeText(path.join(ctx.paths.registerDir, "TECH-DEBT.md"),
-    renderTechDebt([...updated.values()], { runId: ctx.runId, commit: ctx.manifest.commit, ratings: ctx.manifest.ratings, changes, outOfScope: review.out_of_scope }));
+    renderTechDebt([...updated.values()], { runId: ctx.runId, commit: ctx.manifest.commit, ratings: ctx.manifest.ratings, changes }));
   const tally = (k: string) => changes.filter((c) => c.change === k).length;
   ctx.log(`Register: ${tally("add")} added, ${tally("update")} updated, ${tally("propose-resolved")} resolved, ${tally("reopen")} reopened, ${tally("carry")} carried.`);
 }
@@ -140,15 +140,6 @@ function prBody(ctx: RunContext): string {
   for (const v of verdicts) L(`- \`${v.challenge_id}\` **${v.ruling}** (${v.confidence} confidence): ${v.rationale.replace(/\r?\n/g, " ").slice(0, 300)}`);
   if (state.notes.length > 0) L(`${state.notes.length} doubter note(s) recorded without debate: \`${runRel}/doubter-notes.json\`.`);
   L();
-  const outOfScope = readJson<Review>(ctx.file("final-review.json")).out_of_scope ?? [];
-  if (outOfScope.length > 0) {
-    L("### Outside SOLID scope");
-    L();
-    L("Problems found during the review that are not design-principle issues. They do not affect the ratings or the register.");
-    L();
-    for (const o of outOfScope) L(`- **${o.category}**${o.severity ? ` (${o.severity})` : ""}: ${o.title} (\`${o.file}${o.line ? `:${o.line}` : ""}\`, reported by ${o.source ?? "analyst"})`);
-    L();
-  }
   L("### Register changes");
   L();
   const count = (k: string) => changes.filter((c) => c.change === k).length;

@@ -75,11 +75,6 @@ function checkReview(ctx: RunContext, metrics: Metrics, review: Review, recheck:
     errors.push(...checkEvidence(root, [{ file: a.file, line: a.line }], where));
     errors.push(...checkEvidence(root, a.evidence, where));
   });
-  (review.out_of_scope ?? []).forEach((o, i) => {
-    const where = `out_of_scope[${i}]`;
-    errors.push(...checkEvidence(root, [{ file: o.file, line: o.line }], where));
-    errors.push(...checkEvidence(root, o.evidence, where));
-  });
   const required = new Set(recheck.map((i) => i.id));
   for (const c of review.register_checks ?? []) {
     if (!required.delete(c.id)) errors.push(`register_checks: '${c.id}' was not listed for re-verification (or is listed twice).`);

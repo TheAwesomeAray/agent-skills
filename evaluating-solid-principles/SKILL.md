@@ -15,7 +15,7 @@ This skill covers SOLID at the level of types and their members: classes, interf
 
 Out of scope: project and assembly references, layering, solution or folder structure, bounded contexts, build configuration, and architecture in general. Don't open `.csproj` or `.sln` files to look for violations, and don't add findings about them (the script rejects added findings whose `file` isn't a `.cs` file). If the user asks for an architecture review, say this skill doesn't do one.
 
-Problems that aren't SOLID violations (security holes, race conditions, logic bugs, performance) go in the review's optional `out_of_scope` list. They never change a SOLID finding's severity.
+Security, logic bugs, concurrency, performance, and reliability are out of scope too. Don't look for them or report them, and don't let one you happen to notice change a SOLID finding's severity.
 
 ## Requirements
 
@@ -103,13 +103,7 @@ Save to `<repo>/.solid-analysis/solid-review.json`:
       "recommendation": "Concrete next step.",
       "related": ["DIP-004"]
     }
-  ],
-  "out_of_scope": [
-    { "title": "SQL built by string concatenation", "category": "security", "severity": "high",
-      "file": "src/Acme/Orders/OrderQueries.cs", "line": 31, "details": "Customer name is concatenated into the WHERE clause.",
-      "evidence": [{ "file": "src/Acme/Orders/OrderQueries.cs", "line": 31 }] }
-  ],
-  "recommendations": ["Top 3-5 prioritized actions across the codebase."]
+  ],  "recommendations": ["Top 3-5 prioritized actions across the codebase."]
 }
 ```
 
@@ -118,9 +112,7 @@ Save to `<repo>/.solid-analysis/solid-review.json`:
 - `evidence` is optional on reviewed and added findings: `file` paths relative to the repo, an optional `line`, and a `note`. The script rejects files that don't exist and lines past the end of the file, and the report shows the evidence under each High and Critical finding.
 - `recommendation` is optional, but give one for every Critical and High finding you keep, because those are what readers act on.
 - `added` findings require `principle` (srp/ocp/lsp/isp/dip), `severity`, `title`, `type`, `file`, and `details`. `type` is the fully qualified class, interface, record, or struct, and `file` is the `.cs` file that declares it. Use the severity rubric in `references/criteria.md`.
-- `related` is optional on reviewed and added findings: ids or labels of other findings that describe the same root problem (e.g. an SRP and a DIP finding on one controller). The report links them so readers fix them together.
-- `out_of_scope` is optional: problems you noticed that aren't SOLID violations. Each needs `title`, `category` (security, correctness, concurrency, performance, reliability, or other), `file`, and `details`; `severity`, `line`, and `evidence` are optional. The report lists them in their own section and they don't affect any rating.
-- `executive_summary` is required. Write it after reviewing, so it reflects the reviewed picture rather than the raw counts.
+- `related` is optional on reviewed and added findings: ids or labels of other findings that describe the same root problem (e.g. an SRP and a DIP finding on one controller). The report links them so readers fix them together.- `executive_summary` is required. Write it after reviewing, so it reflects the reviewed picture rather than the raw counts.
 - Optional: `"application": "Display Name"` overrides the report title, which defaults to the repo folder name.
 
 

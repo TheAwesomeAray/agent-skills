@@ -1,5 +1,5 @@
 import { addedFindingId } from "./ids.ts";
-import type { AddedFinding, MetricFinding, Metrics, OutOfScopeItem, Outcome, Review, ReviewedEntry, Severity, Summary } from "./types.ts";
+import type { AddedFinding, MetricFinding, Metrics, Outcome, Review, ReviewedEntry, Severity, Summary } from "./types.ts";
 import { sevRank } from "./util.ts";
 import { checkEvidence } from "./validate.ts";
 
@@ -18,8 +18,6 @@ export function isMaterial(from: Level, to: Level, floor: Severity): boolean {
   const kept = from === "dismissed" ? to : to === "dismissed" ? from : undefined;
   return kept !== undefined && kept !== "dismissed" && sevRank(kept) >= sevRank(floor);
 }
-
-const outOfScopeKey = (o: OutOfScopeItem) => `${o.file.toLowerCase()}|${o.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
 
 export interface CurrentDecision {
   id: string;
@@ -47,12 +45,10 @@ export class Decisions {
   private readonly prefix: string;
   summary: Summary;
   readonly registerChecks: Review["register_checks"];
-  private readonly outOfScope = new Map<string, OutOfScopeItem>();
 
   constructor(metrics: Metrics, review: Review, prefix: string) {
     this.prefix = prefix;
     this.registerChecks = review.register_checks;
-    this.addOutOfScope(review.out_of_scope, "analyst");
     this.metrics = new Map(metrics.findings.map((f) => [f.id, f]));
     this.byLabel = new Map(metrics.findings.map((f) => [f.label.toUpperCase(), f.id]));
     this.carried = new Set(metrics.findings.filter((f) => f.carried_forward).map((f) => f.id));
@@ -71,14 +67,6 @@ export class Decisions {
 
   addedId(finding: AddedFinding): string {
     return finding.id ?? addedFindingId(this.prefix, finding.principle, finding.type, finding.title);
-  }
-
-  /** First report of the same problem (same file, same title) wins. */
-  addOutOfScope(items: OutOfScopeItem[] | undefined, source: OutOfScopeItem["source"]): void {
-    for (const item of items ?? []) {
-      const key = outOfScopeKey(item);
-      if (!this.outOfScope.has(key)) this.outOfScope.set(key, { ...item, source: item.source ?? source });
-    }
   }
 
   /** The finding's current level, or undefined for an unknown id. */
@@ -196,9 +184,7 @@ export class Decisions {
       reviewed: [...this.reviewed.values()].filter((r) => !this.carried.has(r.id)),
       added: [...this.added.values()],
       recommendations: this.summary.recommendations,
-      ...(this.registerChecks ? { register_checks: this.registerChecks } : {}),
-      ...(this.outOfScope.size > 0 ? { out_of_scope: [...this.outOfScope.values()] } : {}),
-    };
+      ...(this.registerChecks ? { register_checks: this.registerChecks } : {}),    };
   }
 
   snapshot(): { reviewed: ReviewedEntry[]; added: (AddedFinding & { id: string })[]; carried_forward: string[] } {

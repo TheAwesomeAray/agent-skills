@@ -51,7 +51,7 @@ export async function debateStep(ctx: RunContext): Promise<void> {
 
     const roundInstructions = round === 1
       ? `Read the code for every finding in this coverage list and account for it: put its id in \`checked_and_sound\`, challenge it, or (when your objection is not material) write a note about it. You may also challenge findings outside the list and report missed violations.\n\n\`\`\`json\n${json(required)}\n\`\`\``
-      : `The analyst answered your round ${round - 1} challenges (\`${roundFile(ctx, round - 1, "responses").replace(/\\/g, "/")}\`). Conceded and revised challenges are closed. These were defended:\n\n\`\`\`json\n${json(state.open.map((c) => ({ challenge: c, response: previous?.responses.responses.find((r) => r.challenge_id === c.challenge_id) })))}\n\`\`\`\n\nFor each, either press it again as a new challenge with the same target and new evidence, or let it go, which settles it in the analyst's favor. This round is only about these defended challenges: no new targets and no new missed violations (put anything new in \`notes\` or \`out_of_scope\`). Submit an empty \`challenges\` list if nothing is left to dispute; \`checked_and_sound\` may be empty this round.`;
+      : `The analyst answered your round ${round - 1} challenges (\`${roundFile(ctx, round - 1, "responses").replace(/\\/g, "/")}\`). Conceded and revised challenges are closed. These were defended:\n\n\`\`\`json\n${json(state.open.map((c) => ({ challenge: c, response: previous?.responses.responses.find((r) => r.challenge_id === c.challenge_id) })))}\n\`\`\`\n\nFor each, either press it again as a new challenge with the same target and new evidence, or let it go, which settles it in the analyst's favor. This round is only about these defended challenges: no new targets and no new missed violations (put anything new in \`notes\`). Submit an empty \`challenges\` list if nothing is left to dispute; \`checked_and_sound\` may be empty this round.`;
 
     const doubter = await ctx.agent("doubter");
     const challenges = await doubter.turn<Challenges>(`debate-${round}`, prompt(ctx, "doubter", "submit_challenges", {
@@ -153,11 +153,6 @@ export function checkChallenges(c: Challenges, round: number, max: number, decis
     if (n.target && !id) errors.push(`${where}: unknown target '${n.target}'.`);
     if (id) covered.add(id);
     errors.push(...checkEvidence(root, n.evidence, where));
-  });
-  (c.out_of_scope ?? []).forEach((o, i) => {
-    const where = `out_of_scope[${i}]`;
-    errors.push(...checkEvidence(root, [{ file: o.file, line: o.line }], where));
-    errors.push(...checkEvidence(root, o.evidence, where));
   });
   const missing = required.filter((id) => !covered.has(id));
   if (missing.length > 0) errors.push(`Coverage: these ids are not in checked_and_sound, a challenge, or a note: ${missing.join(", ")}.`);

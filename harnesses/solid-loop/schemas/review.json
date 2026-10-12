@@ -20,7 +20,6 @@
         }
       }
     },
-    "out_of_scope": { "$ref": "common.json#/definitions/out_of_scope" },
     "added": {
       "type": "array",
       "items": { "allOf": [{ "$ref": "common.json#/definitions/added_finding" }, { "required": ["evidence"] }] }

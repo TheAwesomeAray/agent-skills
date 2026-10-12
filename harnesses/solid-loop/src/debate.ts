@@ -78,7 +78,6 @@ export function replay(ctx: RunContext): DebateState {
   let open: Challenge[] = [];
   for (let round = 1; fs.existsSync(roundFile(ctx, round, "challenges")); round++) {
     const challenges = readJson<Challenges>(roundFile(ctx, round, "challenges"));
-    decisions.addOutOfScope(challenges.out_of_scope, "doubter");
     notes.push(...(challenges.notes ?? []).map((n) => ({ round, ...n })));
     if (challenges.challenges.length === 0) { rounds.push({ round, challenges, responses: { round, responses: [] }, applied: [] }); open = []; break; }
     if (!fs.existsSync(roundFile(ctx, round, "responses"))) break;

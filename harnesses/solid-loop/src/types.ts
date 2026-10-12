@@ -40,18 +40,6 @@ export interface ReviewedEntry {
   related?: string[];
 }
 
-/** A real problem that is not a design-principle violation (security, correctness, ...). Never affects SOLID severity. */
-export interface OutOfScopeItem {
-  title: string;
-  category: "security" | "correctness" | "concurrency" | "performance" | "reliability" | "other";
-  severity?: Severity;
-  file: string;
-  line?: number;
-  details: string;
-  evidence: Evidence[];
-  source?: "analyst" | "doubter";
-}
-
 /** A doubter observation that is not worth a debate: recorded, never answered. */
 export interface DoubterNote {
   target: string | null;
@@ -86,7 +74,6 @@ export interface Review {
   added: AddedFinding[];
   recommendations: string[];
   register_checks?: RegisterCheck[];
-  out_of_scope?: OutOfScopeItem[];
 }
 
 export interface Outcome {
@@ -112,7 +99,6 @@ export interface Challenges {
   checked_and_sound: string[];
   challenges: Challenge[];
   notes?: DoubterNote[];
-  out_of_scope?: OutOfScopeItem[];
 }
 
 export interface ChallengeResponse {

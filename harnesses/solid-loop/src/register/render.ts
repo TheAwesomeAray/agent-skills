@@ -1,4 +1,4 @@
-import type { OutOfScopeItem, RegisterItem } from "../types.ts";
+import type { RegisterItem } from "../types.ts";
 import { sevRank } from "../util.ts";
 import type { RegisterChange } from "./reconcile.ts";
 
@@ -12,7 +12,6 @@ export interface RenderContext {
   commit?: string;
   ratings?: Record<string, string>;
   changes?: RegisterChange[];
-  outOfScope?: OutOfScopeItem[];
 }
 
 export function renderTechDebt(items: RegisterItem[], ctx: RenderContext): string {
@@ -90,18 +89,6 @@ export function renderTechDebt(items: RegisterItem[], ctx: RenderContext): strin
     L("## Resolved in the last run");
     L();
     for (const c of resolvedNow) L(`- \`${c.id}\` ${md(c.title)} on \`${md(shortType(c.type))}\`${c.note ? `: ${md(c.note)}` : ""}`);
-    L();
-  }
-
-  if (ctx.outOfScope && ctx.outOfScope.length > 0) {
-    L("## Outside the analysis scope (last run)");
-    L();
-    L("Real problems the last run found that are not part of this analysis (security, correctness, concurrency, ...). They are not register items; track them in the right place.");
-    L();
-    L("| Category | Severity | Issue | Location | Reported by |");
-    L("|---|---|---|---|---|");
-    for (const o of ctx.outOfScope)
-      L(`| ${title(o.category)} | ${o.severity ? title(o.severity) : ""} | ${md(o.title)}: ${md(o.details)} | \`${o.file}${o.line ? `:${o.line}` : ""}\` | ${o.source ?? "analyst"} |`);
     L();
   }
   return out.join("\n");
