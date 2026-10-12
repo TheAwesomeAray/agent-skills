@@ -1,6 +1,9 @@
-# SOLID analysis loop: design
+# Quality harness: design
 
-Status: implemented in `src/` (first version). Covers the analysis loop (analyze, debate, judge, update the technical debt register). The execution loop that changes code is out of scope except for the interface it will use.
+The quality harness has two phases that share one codebase, config, and technical debt register:
+
+- **Analysis** (this document): analyze, debate, judge, update the register. Status: implemented in `src/` (first version). The first and only analyzer so far is SOLID.
+- **Fix** ([FIX-DESIGN.md](FIX-DESIGN.md)): resolve register items one at a time with test-protected refactorings. Status: design. This document covers it only through the register interface in section 7.
 
 ## Contents
 1. Decisions
@@ -23,11 +26,11 @@ Status: implemented in `src/` (first version). Covers the analysis loop (analyze
 | Area | Decision |
 |---|---|
 | Scope | Codebase-agnostic. Nothing in the harness depends on a particular repo, branch name, or git host; repo specifics live in config |
-| Orchestrator | TypeScript program on the Cursor SDK (`@cursor/sdk`), started manually: `npm run solid -- --repo <path>` |
+| Orchestrator | TypeScript program on the Cursor SDK (`@cursor/sdk`), started manually: `npm run quality -- run --repo <path>` |
 | Analyzer | A pluggable step that produces findings in the metrics format. The first one is the C# SOLID analyzer from `evaluating-solid-principles` (needs the .NET 10 SDK); other languages add an analyzer, not harness changes |
 | Runtime | Local agents against a checkout on the machine running the harness |
 | Git host | GitHub through the `gh` CLI by default, behind a small host interface so GitLab or Azure DevOps can be added |
-| Harness code | `agent-skills/harnesses/solid-loop/`. Run output never goes in this repo (it is public) |
+| Harness code | `agent-skills/harnesses/quality/`. Run output never goes in this repo (it is public) |
 | Run output | Committed in the target repo under `.tech-debt/` |
 | Filing | Done by orchestrator code, never by an agent |
 | Review scope | SOLID at the level of types and their members only. Every finding names one type in a `.cs` file. Project references, layering, solution structure, and other architecture concerns are not reviewed (a separate process will cover them). Neither are security, correctness, concurrency, performance, or reliability: agents spend no effort on them, and they never change SOLID severity (specialized agents will cover them) |
@@ -76,7 +79,7 @@ The run id is the UTC timestamp plus the short commit SHA, e.g. `2026-10-12T1633
 | 7 | **Reconcile.** Compute register changes. Match review-added findings to existing items (matcher), then apply the reconciliation rules (section 7) | code + matcher | `register-changes.json`, updated `.tech-debt/items/`, `TECH-DEBT.md` |
 | 8 | **Propose.** Commit the run folder and register changes on the run branch, push to the target repo's remote, open a PR into the base branch with a summary of counts, new/resolved/reopened items, and every judged dispute | code | PR |
 
-Merging the PR is the approval: the register on the base branch changes only when you merge. The execution loop reads the base branch only, so unapproved runs never become work.
+Merging the PR is the approval: the register on the base branch changes only when you merge. The fix phase reads the base branch only, so unapproved runs never become work.
 
 The PR target repo and base branch are always passed explicitly (`git.pr_repo`, or the `origin` remote's repo when unset, and the resolved base branch). When the target is a fork, GitHub defaults PRs to the upstream repo, so the target is never left to the host's defaults.
 
@@ -201,8 +204,8 @@ Line numbers and file paths are excluded because ordinary edits and file moves c
 | `open` | analysis run | Confirmed debt |
 | `accepted` | analysis run, with reason | Real, deliberately not fixing; carried forward |
 | `dismissed` | analysis run, with reason | False positive; carried forward |
-| `in-progress` | execution loop | Claimed: agent, branch, time |
-| `fixed-pending-verification` | execution loop | Change made: commit recorded |
+| `in-progress` | fix phase | Claimed: agent, branch, time |
+| `fixed-pending-verification` | fix phase | Change made: commit recorded |
 | `resolved` | analysis run | Finding absent in code that includes the fix |
 | `reopened` | analysis run | A resolved item came back (treated as open) |
 
@@ -223,7 +226,9 @@ These rules apply as written to metric findings. Review-added items have no metr
 
 Every change appends to the item's `history` list (never edited), so each item tells its own story.
 
-### Interface for the execution loop (later)
+### Interface for the fix phase
+
+The fix phase ([FIX-DESIGN.md](FIX-DESIGN.md)):
 
 - Reads `.tech-debt/items/` on the base branch; picks `open`/`reopened` items by severity.
 - Changes status only through the harness CLI: `claim <id>` and `mark-fixed <id> --commit <sha>`. Never edits the JSON directly.
@@ -246,7 +251,7 @@ The skill keeps working standalone; the harness uses the new options.
 - **Startup failures** (`CursorAgentError`): retry only when `isRetryable`, with backoff; otherwise fail the step with exit code 1.
 - **Run failures** (`result.status === "error"`): fail the step with exit code 2; the transcript id is logged in the manifest.
 - **Validation failures:** the submit tool returns the problems in the same turn, up to `rejections_per_turn` times; if the turn ends without an accepted submission, the agent is re-prompted up to `retries.validation` times, then the step fails. Once a submission is accepted, the agent's run is cancelled after a short grace period if it keeps working; nothing it does afterwards is used.
-- **Resume:** `npm run solid -- resume <run-id> --repo <path>` reloads the manifest, including the original `--set` overrides, and continues from the first step not marked `done`. The debate state is rebuilt by replaying the saved review, round files, and verdicts, so a resumed run reaches exactly the decisions the original would have. Agents are recreated; every prompt names the files from earlier steps, so conversation continuity is not required.
+- **Resume:** `npm run quality -- resume <run-id> --repo <path>` reloads the manifest, including the original `--set` overrides, and continues from the first step not marked `done`. The debate state is rebuilt by replaying the saved review, round files, and verdicts, so a resumed run reaches exactly the decisions the original would have. Agents are recreated; every prompt names the files from earlier steps, so conversation continuity is not required.
 - **Logging:** every agent run is recorded in the manifest (agent id, run id, status, duration, token usage), and the full event stream goes to `events.jsonl` in the work directory, which is not committed.
 
 ## 10. Configuration
@@ -278,13 +283,13 @@ Three layers, later ones overriding earlier ones:
 }
 ```
 
-`base_branch: null` means the remote's default branch, and `pr_repo: null` means the repo the remote points to. `work_dir: null` means `<system temp>/solid-loop`. The analyzer's `report` command doubles as the final validator of every review the analyst submits. CLI overrides use `--set key=value`, e.g. `--set debate.max_rounds=1`. Model ids are checked against `Cursor.models.list` at preflight. Analyzer thresholds stay where each analyzer expects them (for SOLID, the target repo's `solid-thresholds.yaml`).
+`base_branch: null` means the remote's default branch, and `pr_repo: null` means the repo the remote points to. `work_dir: null` means `<system temp>/quality`. The analyzer's `report` command doubles as the final validator of every review the analyst submits. CLI overrides use `--set key=value`, e.g. `--set debate.max_rounds=1`. Model ids are checked against `Cursor.models.list` at preflight. Analyzer thresholds stay where each analyzer expects them (for SOLID, the target repo's `solid-thresholds.yaml`).
 
 ## 11. Code layout
 
 ```
-harnesses/solid-loop/
-  DESIGN.md
+harnesses/quality/
+  DESIGN.md, FIX-DESIGN.md
   package.json, tsconfig.json, harness.config.json
   prompts/              shared-rules, analyst-review, analyst-respond, analyst-summary, doubter, judge, matcher
   schemas/              common, review, challenges, responses, verdicts, summary, matches, register-item (JSON Schema)
@@ -307,7 +312,7 @@ Requires Node 24 or later (TypeScript runs directly through Node's type strippin
 
 ## 12. Deferred
 
-- The execution loop (agents that change code), beyond the register interface in section 7.
+- The fix phase (agents that change code), beyond the register interface in section 7. Designed in [FIX-DESIGN.md](FIX-DESIGN.md).
 - Cloud runtime, scheduled or push-triggered runs.
 - Doubter challenges to thresholds and config.
 - Additional analyzers (other languages or other analysis types). The analyzer contract and per-analyzer id prefixes already allow them.

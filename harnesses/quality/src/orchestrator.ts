@@ -124,7 +124,7 @@ async function execute(ctx: RunContext, keepWorktrees: boolean): Promise<void> {
       ctx.saveManifest();
     }
   } catch (e) {
-    log(`Run failed. Fix the problem and continue with: npm run solid -- resume ${ctx.runId} --repo ${ctx.manifest.repo_root}`);
+    log(`Run failed. Fix the problem and continue with: npm run quality -- resume ${ctx.runId} --repo ${ctx.manifest.repo_root}`);
     throw e;
   } finally {
     await ctx.disposeAgents();

@@ -141,7 +141,7 @@ function prBody(ctx: RunContext): string {
   const out: string[] = [];
   const L = (s = "") => out.push(s);
 
-  L(`Analysis of \`${ctx.manifest.commit.slice(0, 7)}\` on \`${ctx.manifest.base_branch}\`. Merging this PR approves the register changes; the execution loop only reads the base branch.`);
+  L(`Analysis of \`${ctx.manifest.commit.slice(0, 7)}\` on \`${ctx.manifest.base_branch}\`. Merging this PR approves the register changes; the fix phase only reads the base branch.`);
   L();
   L(`**Overall risk: ${(r.overall ?? "?").toUpperCase()}** (${["srp", "ocp", "lsp", "isp", "dip"].map((p) => `${p.toUpperCase()} ${r[p] ?? "?"}`).join(", ")})`);
   L();

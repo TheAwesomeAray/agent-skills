@@ -22,7 +22,7 @@ export const github: Host = {
 
   // --repo and --base are always explicit: for a fork, gh would otherwise target the upstream repo.
   createPullRequest(cwd, pr: PullRequest) {
-    const bodyFile = path.join(os.tmpdir(), `solid-loop-pr-${process.pid}.md`);
+    const bodyFile = path.join(os.tmpdir(), `quality-pr-${process.pid}.md`);
     fs.writeFileSync(bodyFile, pr.body);
     try {
       return exec("gh", ["pr", "create", "--repo", pr.repo, "--base", pr.base, "--head", pr.head, "--title", pr.title, "--body-file", bodyFile], { cwd })

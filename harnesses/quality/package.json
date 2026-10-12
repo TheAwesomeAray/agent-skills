@@ -1,14 +1,14 @@
 {
-  "name": "solid-loop",
+  "name": "quality",
   "version": "0.1.0",
   "private": true,
-  "description": "Orchestrated SOLID analysis with analyst, doubter, and judge agents, feeding a technical debt register.",
+  "description": "Code quality harness: analysis with analyst, doubter, and judge agents feeding a technical debt register, and a fix phase that resolves register items.",
   "type": "module",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "solid": "node src/cli.ts",
+    "quality": "node src/cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

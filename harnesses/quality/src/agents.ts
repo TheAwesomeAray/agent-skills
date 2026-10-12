@@ -46,7 +46,7 @@ export class RoleAgent {
       Agent.create({
         apiKey: ctx.apiKey,
         model: { id: ctx.config.models[role] },
-        name: `solid-loop ${role} ${ctx.runId}`,
+        name: `quality ${role} ${ctx.runId}`,
         tools,
         local: { cwd: ctx.cwd, settingSources: [] },
       }));

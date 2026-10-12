@@ -10,11 +10,11 @@ import type { ItemStatus, Manifest, RegisterItem } from "./types.ts";
 import { HarnessError, now, readJson, writeText } from "./util.ts";
 
 const USAGE = `Usage:
-  npm run solid -- run --repo <path> [--no-push] [--keep-worktrees] [--verbose] [--set key=value ...]
-  npm run solid -- resume <run-id> --repo <path> [same options]
-  npm run solid -- claim <item-id> --repo <path> --agent <name> --branch <branch>
-  npm run solid -- mark-fixed <item-id> --repo <path> --commit <sha>
-  npm run solid -- accept <item-id> --repo <path> --reason <text>
+  npm run quality -- run --repo <path> [--no-push] [--keep-worktrees] [--verbose] [--set key=value ...]
+  npm run quality -- resume <run-id> --repo <path> [same options]
+  npm run quality -- claim <item-id> --repo <path> --agent <name> --branch <branch>
+  npm run quality -- mark-fixed <item-id> --repo <path> --commit <sha>
+  npm run quality -- accept <item-id> --repo <path> --reason <text>
 
 --set overrides any config value, e.g. --set debate.max_rounds=1 --set models.doubter=composer-2.5`;
 
@@ -50,7 +50,7 @@ async function main(): Promise<number> {
   }
 }
 
-// The only way the execution loop (or a person) changes item status between analysis runs.
+// The only way the fix phase (or a person) changes item status between analysis runs.
 function changeItem(command: "claim" | "mark-fixed" | "accept", id: string, repo: string, values: Record<string, unknown>): void {
   const root = repoRoot(repo);
   const registerDir = path.join(root, ".tech-debt");

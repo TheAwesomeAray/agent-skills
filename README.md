@@ -14,7 +14,7 @@ Programs that run skills with several cooperating agents through the [Cursor SDK
 
 | Harness | Description |
 |---|---|
-| [solid-loop](harnesses/solid-loop/DESIGN.md) | Runs `evaluating-solid-principles` with an analyst agent, a doubter agent that challenges its review, and a judge for unresolved disputes. Records the result in a technical debt register committed to the target repo and proposes it as a pull request. Requires Node 24, the .NET 10 SDK, the GitHub CLI, and `CURSOR_API_KEY`. |
+| [quality](harnesses/quality/DESIGN.md) | Code quality harness. The analysis phase runs `evaluating-solid-principles` with an analyst agent, a doubter agent that challenges its review, and a judge for unresolved disputes, then records the result in a technical debt register committed to the target repo and proposes it as a pull request. The fix phase ([design](harnesses/quality/FIX-DESIGN.md), in progress) resolves register items with test-protected refactorings. Requires Node 24, the .NET 10 SDK, the GitHub CLI, and `CURSOR_API_KEY`. |
 
 ## Installing a skill
 

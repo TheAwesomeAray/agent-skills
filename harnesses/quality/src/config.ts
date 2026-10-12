@@ -48,7 +48,7 @@ export function loadConfig(repoRoot: string, overrides: Json): Config {
 
   const result = config as unknown as Config;
   for (const analyzer of Object.values(result.analyzers)) analyzer.skill = path.resolve(HARNESS_DIR, analyzer.skill);
-  result.work_dir = path.resolve(result.work_dir ?? path.join(os.tmpdir(), "solid-loop"));
+  result.work_dir = path.resolve(result.work_dir ?? path.join(os.tmpdir(), "quality"));
   if (!result.analyzers[result.analysis])
     throw new HarnessError(`No analyzer named '${result.analysis}'. Configured: ${Object.keys(result.analyzers).join(", ")}`);
   return result;
