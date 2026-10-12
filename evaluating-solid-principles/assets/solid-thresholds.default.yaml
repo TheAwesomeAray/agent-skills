@@ -41,7 +41,8 @@ composition_roots:
   - "**/*ServiceCollectionExtensions.cs"
 
 # A repo class counts as a "service" (something that should be injected rather than newed up)
-# when it implements an interface or its name ends with one of these suffixes...
+# when it implements an interface that some constructor in the repo takes as a parameter, or
+# its name ends with one of these suffixes...
 service_type_suffixes: [Service, Repository, Client, Manager, Provider, Handler, Gateway, Store, Processor, Engine]
 # ...unless its name ends with one of these, which mark data carriers and framework types.
 non_service_type_suffixes: [Exception, Attribute, EventArgs, Options, Settings, Dto, Request, Response, Command, Query, Event, Message, Model]
@@ -69,8 +70,9 @@ criteria:
     # Public methods (excluding ToString/Equals/GetHashCode overrides). A wide public surface
     # usually means several unrelated capabilities share one type.
     public_methods: { low: 10, medium: 15, high: 25, critical: 40 }
-    # Parameters on the widest constructor (classes only; records are treated as data). More
-    # than about five injected collaborators is the classic sign of a class doing too much.
+    # Injected parameters (interfaces or services) on the widest constructor (classes only;
+    # records are treated as data). More than about five injected collaborators is the classic
+    # sign of a class doing too much.
     constructor_dependencies: { low: 5, medium: 6, high: 8, critical: 11 }
     # Lack of cohesion (Henderson-Sellers LCOM, 0 = every method uses every field, 1 = methods
     # share no fields). Values above about 0.8 suggest the class splits into independent parts.

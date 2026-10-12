@@ -14,6 +14,8 @@ Metrics alone are noisy (a 600-line parser can be perfectly cohesive) and judgme
 - .NET 10 SDK or later (`dotnet --list-sdks`). The script is a single-file app run with `dotnet run`, and nothing needs to be installed beforehand.
 - The first run restores two NuGet packages (Roslyn, YamlDotNet) and compiles the script, which takes about 15 to 60 seconds and needs network access to nuget.org. Later runs take a few seconds.
 
+
+
 ## Workflow
 
 Copy this checklist into your response and tick it off:
@@ -39,13 +41,17 @@ Thresholds come from `assets/solid-thresholds.default.yaml`, overridden by `<rep
 - If the user asks to "set up" or "configure" thresholds, copy the defaults file to `<repo>/solid-thresholds.yaml` so they have the full annotated template to edit.
 - Otherwise, run with whatever exists. Don't create a config file the user didn't ask for.
 
+
+
 ### 2. Run the analysis
 
 ```
 dotnet run <skill-dir>/scripts/solid-analyzer.cs -- analyze <repo>
 ```
 
-This writes `<repo>/.solid-analysis/solid-metrics.json` and prints counts by principle and severity plus the top 25 findings. Options: `--config <yaml>` to use a thresholds file at a different path, `--out <json>` to change the output location.
+This writes `<repo>/.solid-analysis/solid-metrics.json` and prints counts by principle and severity plus the top 25 findings. Options: `--config <yaml>` to use a thresholds file at a different path, `--out <json>` to change the output location, `--register <dir>` to read a technical debt register (see "Re-running after changes").
+
+Each finding has two names. `id` (e.g. `solid-7f3a9c`) is a hash of the principle, criterion, and type, so it stays the same across runs, edits, and file moves. `label` (e.g. `SRP-001`) is a readable position in this run's report and changes between runs.
 
 Read the printed warnings. Unknown keys in the user's thresholds file usually mean a typo, so tell the user. Files with syntax errors produce incomplete metrics for those files.
 
@@ -74,7 +80,8 @@ Save to `<repo>/.solid-analysis/solid-review.json`:
 {
   "executive_summary": "2-5 sentences: overall risk, what drives it, where to focus first.",
   "reviewed": [
-    { "id": "SRP-001", "action": "keep", "recommendation": "Split into X and Y along the field groups {a,b} and {c,d}." },
+    { "id": "SRP-001", "action": "keep", "recommendation": "Split into X and Y along the field groups {a,b} and {c,d}.",
+      "evidence": [{ "file": "src/Acme/OrderService.cs", "line": 40, "note": "Pricing methods never touch _repository" }] },
     { "id": "DIP-004", "action": "dismiss", "reason": "FileStore is the file-system adapter; File.* use is its job." },
     { "id": "LSP-002", "action": "adjust", "severity": "high", "reason": "Fly() is called on Bird collections in AviaryService, so this throws in production paths.", "recommendation": "..." }
   ],
@@ -91,11 +98,15 @@ Save to `<repo>/.solid-analysis/solid-review.json`:
 }
 ```
 
+- `id` can be the finding's stable `id` or its `label`.
 - `action` is `keep`, `dismiss`, or `adjust`. `dismiss` and `adjust` require a `reason`, and `adjust` also requires a `severity`.
+- `evidence` is optional on reviewed and added findings: `file` paths relative to the repo, an optional `line`, and a `note`. The script rejects files that don't exist and lines past the end of the file, and the report shows the evidence under each High and Critical finding.
 - `recommendation` is optional, but give one for every Critical and High finding you keep, because those are what readers act on.
 - `added` findings require `principle` (srp/ocp/lsp/isp/dip), `severity`, `title`, `type`, `file`, and `details`. Use the severity rubric in `references/criteria.md`.
 - `executive_summary` is required. Write it after reviewing, so it reflects the reviewed picture rather than the raw counts.
 - Optional: `"application": "Display Name"` overrides the report title, which defaults to the repo folder name.
+
+
 
 ### 5. Generate the report
 
@@ -110,6 +121,7 @@ On success it prints the overall and per-principle ratings and writes `<repo>/.s
 ### 6. Summarize for the user
 
 Reply with:
+
 - The overall risk rating and a one-line reason.
 - Each principle's rating, in a sentence or a compact list.
 - The top 3 to 5 risks, naming the specific types and what to do about them.
@@ -120,4 +132,6 @@ Mention that `.solid-analysis/` can be added to `.gitignore` if they don't want 
 
 ## Re-running after changes
 
-If the user changes thresholds or code and asks for a fresh profile, rerun step 2. Finding ids are reassigned on every run, so the old `solid-review.json` won't line up. Rebuild it, reusing earlier reasoning wherever the same type and criterion still appear.
+If the user changes thresholds or code and asks for a fresh profile, rerun step 2. Stable `id`s carry over, so decisions in an old `solid-review.json` that use `id`s still apply to the same type and criterion; decisions that use `label`s do not. Drop entries whose ids no longer appear, since the script rejects unknown ids.
+
+If the repo keeps a technical debt register (`.tech-debt/items/*.json`, each with `id`, `status`, and `severity`), pass `--register <repo>/.tech-debt`. Findings the register marks `accepted` or `dismissed` get `carried_forward: true` unless their severity has risen, and don't need review. The report excludes carried-forward dismissals from the ratings.

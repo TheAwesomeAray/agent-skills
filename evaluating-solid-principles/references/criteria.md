@@ -35,11 +35,11 @@ Adjust a metric finding by one level when context clearly warrants it (how centr
 **public_methods.** A wide surface often means several roles in one type.
 - Dismiss or lower: fluent builders, facades whose stated purpose is aggregation, extension-method holders, controllers whose actions all serve one resource.
 
-**constructor_dependencies.** Many collaborators usually means many responsibilities.
+**constructor_dependencies.** Many collaborators usually means many responsibilities. Only parameters typed as interfaces or repo services count; data parameters (ids, strings, DTOs, value objects) do not.
 - Dismiss or lower: `ILogger<T>`, `IOptions<T>`, and similar plumbing inflate the count. Recount without them; if the remainder is under the medium threshold, lower or dismiss. MediatR-style handlers with many dependencies are still a real signal.
 
-**lcom.** 1.0 means no field is shared by two methods: the class is several classes sharing a name. Group methods by the fields they touch; each group is a candidate class. Use those groups in the recommendation.
-- Dismiss or lower: classes whose fields are all used through one private helper (the metric only sees direct references), and stateless "service" classes whose single dependency is used once per method.
+**lcom.** 1.0 means no field is shared by two methods: the class is several classes sharing a name. Group methods by the fields they touch; each group is a candidate class. Use those groups in the recommendation. State includes fields, auto-properties that some method uses, and primary constructor parameters; a method that reads a computed property is credited with the state behind it.
+- Dismiss or lower: classes whose fields are all used through one private helper (the metric only sees direct references), stateless "service" classes whose single dependency is used once per method, and domain entities whose methods are small per-property mutators (`Rename`, `ChangeAddress`) guarding one invariant each.
 
 **Judgment checks** (add findings when you see these in hotspots):
 - Mixed abstraction levels in one class: business rules next to SQL, HTTP, or file formatting.

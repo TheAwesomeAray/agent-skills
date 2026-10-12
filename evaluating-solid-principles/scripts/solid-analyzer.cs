@@ -29,7 +29,7 @@ static class Cli
 {
     const string Usage = """
         Usage:
-          dotnet run solid-analyzer.cs -- analyze <repo-path> [--config <yaml>] [--defaults <yaml>] [--out <metrics.json>]
+          dotnet run solid-analyzer.cs -- analyze <repo-path> [--config <yaml>] [--defaults <yaml>] [--out <metrics.json>] [--register <tech-debt-dir>]
           dotnet run solid-analyzer.cs -- report --metrics <metrics.json> [--review <review.json>] [--out <report.md>]
         """;
 
@@ -431,8 +431,56 @@ sealed class TypeModel
 }
 
 sealed record Finding(
-    string Id, string Principle, string Criterion, string Type, string File, int Line,
-    double Value, string Severity, double Threshold, string Details);
+    string Id, string Label, string Principle, string Criterion, string Type, string File, int Line,
+    double Value, string Severity, double Threshold, string Details)
+{
+    public string? RegisterStatus { get; init; }
+    public bool? CarriedForward { get; init; }
+}
+
+// Ids survive edits and file moves: they hash what a finding is about, never where it is.
+static class StableId
+{
+    public static string MetricKey(string principle, string criterion, string type) => $"{principle}|{criterion}|{type}";
+    public static string AddedKey(string principle, string type, string title) =>
+        $"{principle}|{type}|{Regex.Replace(title.ToLowerInvariant(), "[^a-z0-9]+", " ").Trim()}";
+
+    public static string Of(string key, int length = 6) =>
+        "solid-" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..length];
+
+    // Assigns 6-character ids, widening to 8 for keys whose short ids collide.
+    public static List<string> Assign(IReadOnlyList<string> keys)
+    {
+        var shortIds = keys.Select(k => Of(k)).ToList();
+        var collided = shortIds.GroupBy(s => s).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        return keys.Select((k, i) => collided.Contains(shortIds[i]) ? Of(k, 8) : shortIds[i]).ToList();
+    }
+}
+
+// Reads a technical debt register (<dir>/items/*.json) so settled findings can skip review.
+static class Register
+{
+    public sealed record Item(string Status, string? Severity);
+
+    public static Dictionary<string, Item> Load(string dir)
+    {
+        var itemsDir = Path.Combine(dir, "items");
+        if (!Directory.Exists(dir)) throw new UserError($"Register directory not found: {dir}");
+        var items = new Dictionary<string, Item>(StringComparer.OrdinalIgnoreCase);
+        if (!Directory.Exists(itemsDir)) return items;
+        foreach (var path in Directory.EnumerateFiles(itemsDir, "*.json"))
+        {
+            JsonNode? node;
+            try { node = JsonNode.Parse(File.ReadAllText(path)); }
+            catch (JsonException e) { throw new UserError($"Register item {path} is not valid JSON: {e.Message}"); }
+            var id = Json.Str(node?["id"]);
+            var status = Json.Str(node?["status"]);
+            if (id is null || status is null) throw new UserError($"Register item {path} needs 'id' and 'status'.");
+            items[id] = new Item(status, Json.Str(node?["severity"])?.ToLowerInvariant());
+        }
+        return items;
+    }
+}
 
 // ---------------------------------------------------------------- analyze
 
@@ -484,19 +532,24 @@ static class Analyzer
         var repoTypeNames = types.Values.Select(t => t.Name).ToHashSet();
         var serviceSuffixes = config.ServiceSuffixes;
         var nonServiceSuffixes = config.NonServiceSuffixes;
+        // An interface only marks its implementers as services if something in the repo injects it;
+        // marker and framework-callback interfaces (IEntity, IFilter, IEventListener) do not.
+        var injectedInterfaces = types.Values.SelectMany(t => t.ConstructorParameters)
+            .Select(p => Syn.SimpleName(p.Type)).Where(IsInterface).ToHashSet();
         var serviceNames = types.Values
             .Where(t => t.Kind == "class" && !t.IsAbstract && !t.IsStatic
                 && !nonServiceSuffixes.Any(s => t.Name.EndsWith(s, StringComparison.Ordinal))
-                && (t.BaseNames.Any(IsInterface) || serviceSuffixes.Any(s => t.Name.EndsWith(s, StringComparison.Ordinal))))
+                && (t.BaseNames.Any(injectedInterfaces.Contains) || serviceSuffixes.Any(s => t.Name.EndsWith(s, StringComparison.Ordinal))))
             .Select(t => t.Name)
             .ToHashSet();
+        bool IsDependency(ParameterSyntax p) => Syn.SimpleName(p.Type) is var n && (IsInterface(n) || serviceNames.Contains(n));
 
         // Pass 2: metrics and findings.
         var findings = new List<Finding>();
         void Check(Criterion c, TypeModel t, double value, string details, SyntaxNode? at = null)
         {
             if (c.Classify(value) is not { } severity) return;
-            findings.Add(new Finding("", c.Principle, c.Name, t.FullName,
+            findings.Add(new Finding("", "", c.Principle, c.Name, t.FullName,
                 at?.SyntaxTree.FilePath ?? t.PrimaryFile, at is null ? t.Line : Syn.Line(at),
                 Math.Round(value, 2), severity, c.For(severity)!.Value, details));
         }
@@ -526,28 +579,45 @@ static class Analyzer
             }
             if (isClass && !t.IsStatic)
             {
-                var ctorDeps = t.Members.OfType<ConstructorDeclarationSyntax>()
+                // Only injected abstractions and services count; data parameters (ids, names, DTOs) are not dependencies.
+                var widest = t.Members.OfType<ConstructorDeclarationSyntax>()
                     .Where(c => !Syn.Has(c.Modifiers, SyntaxKind.StaticKeyword))
-                    .Select(c => c.ParameterList.Parameters.Count)
-                    .Concat(t.Parts.Select(p => p.Decl.ParameterList?.Parameters.Count ?? 0))
-                    .DefaultIfEmpty(0).Max();
-                Check(config.C("srp", "constructor_dependencies"), t, ctorDeps, $"widest constructor takes {ctorDeps} parameters");
+                    .Select(c => c.ParameterList.Parameters)
+                    .Concat(t.Parts.Select(p => p.Decl.ParameterList?.Parameters ?? default))
+                    .Select(ps => (Deps: ps.Count(IsDependency), Total: ps.Count))
+                    .DefaultIfEmpty((Deps: 0, Total: 0)).MaxBy(x => x.Deps);
+                Check(config.C("srp", "constructor_dependencies"), t, widest.Deps,
+                    $"widest constructor takes {widest.Deps} injected dependencies (interfaces or services) out of {widest.Total} parameters");
 
+                // State = instance fields, auto-properties, and primary constructor parameters. A method that reads a
+                // computed property is credited with the state that property reads.
                 var lcom = config.C("srp", "lcom");
-                var fields = t.Members.OfType<FieldDeclarationSyntax>()
-                    .Where(f => !Syn.Has(f.Modifiers, SyntaxKind.StaticKeyword) && !Syn.Has(f.Modifiers, SyntaxKind.ConstKeyword))
-                    .SelectMany(f => f.Declaration.Variables.Select(v => v.Identifier.Text))
-                    .Concat(t.Parts.SelectMany(p => p.Decl.ParameterList?.Parameters.Select(x => x.Identifier.Text) ?? []))
-                    .Distinct().ToList();
+                var properties = t.Members.OfType<PropertyDeclarationSyntax>().Where(p => !Syn.Has(p.Modifiers, SyntaxKind.StaticKeyword)).ToList();
+                static bool IsAuto(PropertyDeclarationSyntax p) =>
+                    p.ExpressionBody is null && p.AccessorList is { } al && al.Accessors.All(a => a.Body is null && a.ExpressionBody is null);
+                static HashSet<string> Identifiers(SyntaxNode n) => n.DescendantNodes().OfType<IdentifierNameSyntax>().Select(i => i.Identifier.Text).ToHashSet();
+                var computed = properties.Where(p => !IsAuto(p)).GroupBy(p => p.Identifier.Text).ToDictionary(g => g.Key, g => Identifiers(g.First()));
                 var methods = t.Members.OfType<MethodDeclarationSyntax>()
                     .Where(m => !Syn.Has(m.Modifiers, SyntaxKind.StaticKeyword) && (m.Body is not null || m.ExpressionBody is not null))
                     .ToList();
+                var used = methods.Select(m =>
+                {
+                    var ids = Identifiers(m);
+                    foreach (var name in ids.Where(computed.ContainsKey).ToList()) ids.UnionWith(computed[name]);
+                    return ids;
+                }).ToList();
+                // Auto-properties no method touches are data surface (binding, persistence), not state that methods share.
+                var fields = t.Members.OfType<FieldDeclarationSyntax>()
+                    .Where(f => !Syn.Has(f.Modifiers, SyntaxKind.StaticKeyword) && !Syn.Has(f.Modifiers, SyntaxKind.ConstKeyword))
+                    .SelectMany(f => f.Declaration.Variables.Select(v => v.Identifier.Text))
+                    .Concat(properties.Where(IsAuto).Select(p => p.Identifier.Text).Where(name => used.Any(u => u.Contains(name))))
+                    .Concat(t.Parts.SelectMany(p => p.Decl.ParameterList?.Parameters.Select(x => x.Identifier.Text) ?? []))
+                    .Distinct().ToList();
                 if (methods.Count >= lcom.Option("min_methods", 4) && fields.Count >= lcom.Option("min_fields", 2))
                 {
-                    var used = methods.Select(m => m.DescendantNodes().OfType<IdentifierNameSyntax>().Select(i => i.Identifier.Text).ToHashSet()).ToList();
                     double avg = fields.Average(f => used.Count(u => u.Contains(f)));
                     double value = Math.Clamp((methods.Count - avg) / (methods.Count - 1), 0, 1);
-                    Check(lcom, t, value, $"LCOM-HS {value:0.00}: {methods.Count} instance methods, {fields.Count} fields; each field is used by {avg:0.#} method(s) on average");
+                    Check(lcom, t, value, $"LCOM-HS {value:0.00}: {methods.Count} instance methods, {fields.Count} fields and auto-properties; each is used by {avg:0.#} method(s) on average");
                 }
             }
 
@@ -652,17 +722,34 @@ static class Analyzer
             }
         }
 
-        // Stable ids: per principle, most severe first.
+        // Labels (SRP-001) are for reading this run's report; ids are stable across runs.
         var counters = Principle.All.ToDictionary(p => p, _ => 0);
-        var sorted = findings
+        var ordered = findings
             .OrderBy(f => Array.IndexOf(Principle.All, f.Principle))
             .ThenByDescending(f => Sev.Rank(f.Severity))
             .ThenByDescending(f => f.Threshold == 0 ? f.Value : f.Value / f.Threshold)
             .ThenBy(f => f.Type, StringComparer.Ordinal)
-            .Select(f => f with { Id = $"{f.Principle.ToUpperInvariant()}-{++counters[f.Principle]:000}" })
             .ToList();
+        var ids = StableId.Assign(ordered.Select(f => StableId.MetricKey(f.Principle, f.Criterion, f.Type)).ToList());
+        var register = opts.GetValueOrDefault("register") is { } registerDir ? Register.Load(registerDir) : null;
+        var sorted = ordered.Select((f, i) =>
+        {
+            var labeled = f with { Id = ids[i], Label = $"{f.Principle.ToUpperInvariant()}-{++counters[f.Principle]:000}" };
+            if (register?.GetValueOrDefault(ids[i]) is not { } item) return labeled;
+            bool settled = item.Status is "accepted" or "dismissed";
+            return labeled with
+            {
+                RegisterStatus = item.Status,
+                CarriedForward = settled && (item.Severity is null || Sev.Rank(f.Severity) <= Sev.Rank(item.Severity)),
+            };
+        }).ToList();
 
-        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, WriteIndented = true };
+        var jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        };
         var doc = new JsonObject
         {
             ["generated_utc"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'"),
@@ -716,12 +803,16 @@ static class Analyzer
         foreach (var p in Principle.All)
             Console.WriteLine($"  {p.ToUpperInvariant()}  {Counts(findings.Where(f => f.Principle == p))}");
 
-        var top = findings.OrderByDescending(f => Sev.Rank(f.Severity)).ThenBy(f => f.Id).Take(25).ToList();
+        int carried = findings.Count(f => f.CarriedForward == true);
+        if (carried > 0)
+            Console.WriteLine($"{carried} finding(s) are accepted or dismissed in the register and carried forward without review.");
+
+        var top = findings.OrderByDescending(f => Sev.Rank(f.Severity)).ThenBy(f => f.Label).Take(25).ToList();
         if (top.Count > 0)
         {
             Console.WriteLine($"\nTop {top.Count} findings:");
             foreach (var f in top)
-                Console.WriteLine($"  [{f.Severity.ToUpperInvariant(),-8}] {f.Id}  {f.Criterion} = {Fmt.Num(f.Value)} (>= {Fmt.Num(f.Threshold)})  {f.Type}  {f.File}:{f.Line}");
+                Console.WriteLine($"  [{f.Severity.ToUpperInvariant(),-8}] {f.Label} {f.Id}  {f.Criterion} = {Fmt.Num(f.Value)} (>= {Fmt.Num(f.Threshold)})  {f.Type}  {f.File}:{f.Line}");
         }
         Console.WriteLine($"\nMetrics written to: {outPath}");
     }
@@ -732,6 +823,7 @@ static class Analyzer
 sealed class ReportFinding
 {
     public required string Id { get; init; }
+    public required string Label { get; init; }
     public required string Principle { get; init; }
     public required string Criterion { get; init; }
     public required string Type { get; init; }
@@ -746,6 +838,9 @@ sealed class ReportFinding
     public bool Dismissed { get; set; }
     public string? Reason { get; set; }
     public string? Recommendation { get; set; }
+    public List<string> Evidence { get; set; } = [];
+    public string? RegisterStatus { get; init; }
+    public bool CarriedForward { get; init; }
 }
 
 static class Reporter
@@ -760,6 +855,7 @@ static class Reporter
         var findings = (metrics["findings"] as JsonArray ?? []).Select(n => new ReportFinding
         {
             Id = Json.Str(n!["id"])!,
+            Label = Json.Str(n["label"]) ?? Json.Str(n["id"])!,
             Principle = Json.Str(n["principle"])!,
             Criterion = Json.Str(n["criterion"])!,
             Type = Json.Str(n["type"])!,
@@ -770,8 +866,16 @@ static class Reporter
             Severity = Json.Str(n["severity"])!,
             OriginalSeverity = Json.Str(n["severity"])!,
             Details = Json.Str(n["details"]) ?? "",
+            RegisterStatus = Json.Str(n["register_status"]),
+            CarriedForward = Json.Bool(n["carried_forward"], false),
         }).ToList();
+        foreach (var f in findings.Where(f => f.CarriedForward && f.RegisterStatus == "dismissed"))
+        {
+            f.Dismissed = true;
+            f.Reason = "Dismissed in the technical debt register; carried forward without review.";
+        }
 
+        var repoPath = Json.Str(metrics["repo_path"]);
         var review = new ReviewData();
         if (opts.GetValueOrDefault("review") is { } reviewPath)
         {
@@ -779,7 +883,7 @@ static class Reporter
             JsonNode? reviewJson;
             try { reviewJson = JsonNode.Parse(File.ReadAllText(reviewPath)); }
             catch (JsonException e) { throw new UserError($"{reviewPath} is not valid JSON: {e.Message}"); }
-            var errors = ApplyReview(reviewJson, findings, review);
+            var errors = ApplyReview(reviewJson, findings, review, repoPath);
             if (errors.Count > 0)
             {
                 Console.Error.WriteLine($"Review file has {errors.Count} problem(s); no report written:");
@@ -806,7 +910,30 @@ static class Reporter
         public List<string> Recommendations = [];
     }
 
-    static List<string> ApplyReview(JsonNode? json, List<ReportFinding> findings, ReviewData review)
+    // Optional `evidence: [{file, line, note}]`; files must exist in the analyzed repo and lines must be in range.
+    static List<string> ReadEvidence(JsonNode? node, string where, string? repoPath, List<string> errors)
+    {
+        var result = new List<string>();
+        if (node is null) return result;
+        if (node is not JsonArray items) { errors.Add($"{where}: 'evidence' must be an array of {{file, line, note}}."); return result; }
+        for (int i = 0; i < items.Count; i++)
+        {
+            var file = Json.Str(items[i]?["file"]);
+            var line = (int)(Json.Num(items[i]?["line"]) ?? 0);
+            var note = Json.Str(items[i]?["note"]);
+            if (string.IsNullOrWhiteSpace(file)) { errors.Add($"{where}.evidence[{i}]: 'file' is required."); continue; }
+            if (repoPath is not null)
+            {
+                var full = Path.Combine(repoPath, file);
+                if (!File.Exists(full)) { errors.Add($"{where}.evidence[{i}]: file '{file}' does not exist in {repoPath}."); continue; }
+                if (line > 0 && line > File.ReadLines(full).Count()) { errors.Add($"{where}.evidence[{i}]: line {line} is past the end of '{file}'."); continue; }
+            }
+            result.Add((line > 0 ? $"`{file}:{line}`" : $"`{file}`") + (string.IsNullOrWhiteSpace(note) ? "" : $" {note}"));
+        }
+        return result;
+    }
+
+    static List<string> ApplyReview(JsonNode? json, List<ReportFinding> findings, ReviewData review, string? repoPath)
     {
         var errors = new List<string>();
         if (json is not JsonObject root) return ["The review file must be a JSON object."];
@@ -816,7 +943,8 @@ static class Reporter
         if (string.IsNullOrWhiteSpace(review.ExecutiveSummary)) errors.Add("'executive_summary' is required: 2-5 sentences on the overall risk and what drives it.");
         review.Recommendations = Json.Strs(root["recommendations"]);
 
-        var byId = findings.ToDictionary(f => f.Id, StringComparer.OrdinalIgnoreCase);
+        var byId = new Dictionary<string, ReportFinding>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in findings) { byId[f.Id] = f; byId[f.Label] = f; }
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var reviewed = root["reviewed"] as JsonArray ?? [];
         for (int i = 0; i < reviewed.Count; i++)
@@ -828,11 +956,13 @@ static class Reporter
             if (!byId.TryGetValue(id, out var f))
             {
                 var prefix = id.Split('-')[0].ToUpperInvariant();
-                var known = findings.Where(x => x.Id.StartsWith(prefix + "-")).Select(x => x.Id).ToList();
-                errors.Add($"{where}: unknown finding id '{id}'." + (known.Count > 0 ? $" {prefix} ids run from {known[0]} to {known[^1]}." : $" There are no {prefix} findings."));
+                var known = findings.Where(x => x.Label.StartsWith(prefix + "-")).Select(x => x.Label).ToList();
+                errors.Add($"{where}: unknown finding id '{id}'. Use the finding's 'id' (solid-xxxxxx) or its 'label'." +
+                    (known.Count > 0 ? $" {prefix} labels run from {known[0]} to {known[^1]}." : ""));
                 continue;
             }
-            if (!seen.Add(id)) { errors.Add($"{where}: '{id}' is reviewed more than once."); continue; }
+            if (!seen.Add(f.Id)) { errors.Add($"{where}: '{id}' ({f.Label}) is reviewed more than once."); continue; }
+            f.Evidence = ReadEvidence(item!["evidence"], where, repoPath, errors);
 
             var action = Json.Str(item!["action"]);
             var reason = Json.Str(item["reason"]);
@@ -875,11 +1005,20 @@ static class Reporter
             if (!Sev.Valid(severity)) errors.Add($"{where}: 'severity' must be one of: {string.Join(", ", Sev.Ascending)} (got '{severity}').");
             foreach (var (key, value) in new[] { ("title", title), ("type", type), ("file", file), ("details", details) })
                 if (string.IsNullOrWhiteSpace(value)) errors.Add($"{where}: '{key}' is required.");
+            var evidence = ReadEvidence(item["evidence"], where, repoPath, errors);
             if (errors.Count > 0 && (principle is null || !Principle.All.Contains(principle) || !Sev.Valid(severity))) continue;
 
+            var id = Json.Str(item["id"]) ?? StableId.Of(StableId.AddedKey(principle!, type ?? "", title ?? ""));
+            if (findings.Any(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase)))
+            {
+                errors.Add($"{where}: id '{id}' is already used by another finding; give it a different title or an explicit 'id'.");
+                continue;
+            }
             findings.Add(new ReportFinding
             {
-                Id = $"{principle!.ToUpperInvariant()}-R{++counters[principle]:00}",
+                Id = id,
+                Label = $"{principle!.ToUpperInvariant()}-R{++counters[principle]:00}",
+                Evidence = evidence,
                 Principle = principle,
                 Criterion = title ?? "",
                 Type = type ?? "",
@@ -1015,15 +1154,16 @@ static class Reporter
         L();
         foreach (var p in Principle.All)
         {
-            var fs = kept.Where(f => f.Principle == p).OrderByDescending(f => Sev.Rank(f.Severity)).ThenBy(f => f.Id).ToList();
+            var fs = kept.Where(f => f.Principle == p).OrderByDescending(f => Sev.Rank(f.Severity)).ThenBy(f => f.Label).ToList();
             L($"### {Principle.Name(p)} ({p.ToUpperInvariant()}): {r.Ratings[p].ToUpperInvariant()}");
             L();
             if (fs.Count == 0) { L("No findings."); L(); continue; }
 
             foreach (var f in fs.Where(f => Sev.Rank(f.Severity) >= Sev.Rank("high")))
             {
-                L($"#### {f.Id} · {Sev.Title(f.Severity)} · `{Md(ShortType(f.Type))}`");
+                L($"#### {f.Label} · {Sev.Title(f.Severity)} · `{Md(ShortType(f.Type))}`");
                 L();
+                L($"- **Id:** `{f.Id}`");
                 L($"- **Location:** {Loc(f)}");
                 L(f.FromReview
                     ? $"- **Issue:** {f.Criterion} (found during manual review)"
@@ -1031,6 +1171,7 @@ static class Reporter
                 L($"- **Evidence:** {f.Details}");
                 if (f.Severity != f.OriginalSeverity) L($"- **Severity adjusted** from {Sev.Title(f.OriginalSeverity)} to {Sev.Title(f.Severity)}: {f.Reason}");
                 else if (!string.IsNullOrWhiteSpace(f.Reason)) L($"- **Reviewer note:** {f.Reason}");
+                if (f.Evidence.Count > 0) L($"- **Reviewer evidence:** {string.Join("; ", f.Evidence)}");
                 if (!string.IsNullOrWhiteSpace(f.Recommendation)) L($"- **Recommendation:** {f.Recommendation}");
                 L();
             }
@@ -1038,14 +1179,14 @@ static class Reporter
             var minor = fs.Where(f => Sev.Rank(f.Severity) < Sev.Rank("high")).ToList();
             if (minor.Count > 0)
             {
-                L("| ID | Severity | Type | Location | Criterion | Value | Notes |");
-                L("|---|---|---|---|---|---:|---|");
+                L("| Finding | Id | Severity | Type | Location | Criterion | Value | Notes |");
+                L("|---|---|---|---|---|---|---:|---|");
                 foreach (var f in minor)
                 {
                     var notes = string.Join(" ", new[] { f.FromReview ? f.Details : null, f.Severity != f.OriginalSeverity ? $"Adjusted from {f.OriginalSeverity}: {f.Reason}" : f.Reason, f.Recommendation }
                         .Where(s => !string.IsNullOrWhiteSpace(s)));
                     if (notes.Length == 0) notes = f.Details;
-                    L($"| {f.Id} | {Sev.Title(f.Severity)} | `{Md(ShortType(f.Type))}` | {Loc(f)} | {Md(f.Criterion)} | {(f.Value is { } v ? Fmt.Num(v) : "")} | {Md(notes)} |");
+                    L($"| {f.Label} | `{f.Id}` | {Sev.Title(f.Severity)} | `{Md(ShortType(f.Type))}` | {Loc(f)} | {Md(f.Criterion)} | {(f.Value is { } v ? Fmt.Num(v) : "")} | {Md(notes)} |");
                 }
                 L();
             }
@@ -1058,10 +1199,10 @@ static class Reporter
             L();
             L("Metric findings that manual review judged to be false positives. They do not count toward the ratings.");
             L();
-            L("| ID | Type | Criterion | Value | Reason |");
-            L("|---|---|---|---:|---|");
+            L("| Finding | Id | Type | Criterion | Value | Reason |");
+            L("|---|---|---|---|---:|---|");
             foreach (var f in dismissed)
-                L($"| {f.Id} | `{Md(ShortType(f.Type))}` | {f.Criterion} | {Fmt.Num(f.Value ?? 0)} | {Md(f.Reason)} |");
+                L($"| {f.Label} | `{f.Id}` | `{Md(ShortType(f.Type))}` | {f.Criterion} | {Fmt.Num(f.Value ?? 0)} | {Md(f.Reason)} |");
             L();
         }
 
