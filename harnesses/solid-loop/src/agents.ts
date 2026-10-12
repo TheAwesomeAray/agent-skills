@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { Agent, CursorAgentError, type RunResult, type SDKAgent, type SDKCustomTool, type SDKJsonValue, type SDKMessage } from "@cursor/sdk";
+import { Agent, CursorAgentError, type Run, type RunResult, type SDKAgent, type SDKCustomTool, type SDKJsonValue, type SDKMessage } from "@cursor/sdk";
 import type { Config } from "./config.ts";
 import type { Role, TurnRecord } from "./types.ts";
 import { HarnessError, log, now, sleep } from "./util.ts";
@@ -31,6 +31,8 @@ export class RoleAgent {
   readonly role: Role;
   private readonly agent: SDKAgent;
   private readonly ctx: AgentContext;
+  private currentRun: Run | undefined;
+  private acceptedInRun = false;
   step = "";
 
   private constructor(role: Role, agent: SDKAgent, ctx: AgentContext) {
@@ -76,7 +78,8 @@ export class RoleAgent {
         }
         accepted = value;
         log(`[${this.role}] ${submission.tool} accepted`);
-        return `Accepted. Reply with one short line and stop. Do not call ${submission.tool} again.`;
+        this.endRunSoon();
+        return `Accepted. Your task is complete. Reply with one short line and stop. Do not read more files or call ${submission.tool} again.`;
       },
     };
 
@@ -90,9 +93,23 @@ export class RoleAgent {
     throw new HarnessError(`${this.role} did not produce an accepted ${submission.tool} submission in step '${step}'.`, 2);
   }
 
+  // Agents sometimes keep exploring after their submission is accepted; nothing they do afterwards is used.
+  private endRunSoon(): void {
+    this.acceptedInRun = true;
+    const run = this.currentRun;
+    setTimeout(() => {
+      if (run && run.status === "running" && run.supports("cancel")) {
+        log(`[${this.role}] ending run ${run.id}: submission already accepted`);
+        run.cancel().catch(() => undefined);
+      }
+    }, 20_000).unref();
+  }
+
   private async send(text: string, customTools: Record<string, SDKCustomTool>): Promise<RunResult> {
     const run = await withStartupRetries(this.role, this.ctx.config.retries.startup, () =>
       this.agent.send(text, { local: { customTools } }));
+    this.currentRun = run;
+    this.acceptedInRun = false;
     log(`[${this.role}] run ${run.id} started`);
     const streaming = this.pipe(run.stream()).catch(() => undefined);
     const minutes = this.ctx.config.timeouts_minutes[this.role];
@@ -117,7 +134,7 @@ export class RoleAgent {
     });
     log(`[${this.role}] run ${run.id} ${result.status}${result.durationMs ? ` in ${Math.round(result.durationMs / 1000)}s` : ""}`);
     if (result.status === "error") throw new HarnessError(`${this.role} run ${run.id} failed: ${result.error?.message ?? "unknown error"}`, 2);
-    if (result.status === "cancelled") throw new HarnessError(`${this.role} run ${run.id} was cancelled.`, 2);
+    if (result.status === "cancelled" && !this.acceptedInRun) throw new HarnessError(`${this.role} run ${run.id} was cancelled.`, 2);
     return result;
   }
 

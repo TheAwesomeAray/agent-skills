@@ -242,8 +242,8 @@ The skill keeps working standalone; the harness uses the new options.
 
 - **Startup failures** (`CursorAgentError`): retry only when `isRetryable`, with backoff; otherwise fail the step with exit code 1.
 - **Run failures** (`result.status === "error"`): fail the step with exit code 2; the transcript id is logged in the manifest.
-- **Validation failures:** the submit tool returns the problems in the same turn, up to `rejections_per_turn` times; if the turn ends without an accepted submission, the agent is re-prompted up to `retries.validation` times, then the step fails.
-- **Resume:** `npm run solid -- resume <run-id> --repo <path>` reloads the manifest and continues from the first step not marked `done`. The debate state is rebuilt by replaying the saved review, round files, and verdicts, so a resumed run reaches exactly the decisions the original would have. Agents are recreated; every prompt names the files from earlier steps, so conversation continuity is not required.
+- **Validation failures:** the submit tool returns the problems in the same turn, up to `rejections_per_turn` times; if the turn ends without an accepted submission, the agent is re-prompted up to `retries.validation` times, then the step fails. Once a submission is accepted, the agent's run is cancelled after a short grace period if it keeps working; nothing it does afterwards is used.
+- **Resume:** `npm run solid -- resume <run-id> --repo <path>` reloads the manifest, including the original `--set` overrides, and continues from the first step not marked `done`. The debate state is rebuilt by replaying the saved review, round files, and verdicts, so a resumed run reaches exactly the decisions the original would have. Agents are recreated; every prompt names the files from earlier steps, so conversation continuity is not required.
 - **Logging:** every agent run is recorded in the manifest (agent id, run id, status, duration, token usage), and the full event stream goes to `events.jsonl` in the work directory, which is not committed.
 
 ## 10. Configuration

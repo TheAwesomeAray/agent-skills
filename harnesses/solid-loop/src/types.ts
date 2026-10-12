@@ -202,4 +202,6 @@ export interface Manifest {
   status: "running" | "failed" | "proposed" | "completed";
   pr?: string;
   push: boolean;
+  /** `--set` overrides from the original command, reapplied on resume. */
+  overrides?: Record<string, unknown>;
 }

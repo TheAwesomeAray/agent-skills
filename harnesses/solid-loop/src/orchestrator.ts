@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { Cursor, CursorAgentError } from "@cursor/sdk";
-import { loadConfig, type Config } from "./config.ts";
+import { loadConfig, merge, type Config } from "./config.ts";
 import { RunContext, runPaths, STEPS, type StepName } from "./context.ts";
 import { addWorktree, git, gitTry, isDisabledPushUrl, remoteHead, removeWorktree, repoRoot } from "./git.ts";
 import { getHost } from "./hosts/index.ts";
@@ -68,7 +68,7 @@ async function preflight(opts: RunOptions): Promise<RunContext> {
   const manifest: Manifest = {
     schema_version: 1, run_id: runId, analysis: config.analysis, repo: originRepo, repo_root: root, commit, base_branch: baseBranch,
     branch, work_dir: paths.workDir, models: config.models as Record<Role, string>,
-    steps: STEPS.map((name) => ({ name, status: "pending" })), turns: [], status: "running", push: opts.push,
+    steps: STEPS.map((name) => ({ name, status: "pending" })), turns: [], status: "running", push: opts.push, overrides: opts.overrides,
   };
   const ctx = new RunContext({ config, host, manifest, apiKey: apiKey(), verbose: opts.verbose });
   ctx.saveManifest();
@@ -79,11 +79,12 @@ async function preflight(opts: RunOptions): Promise<RunContext> {
 
 async function resumeContext(runId: string, opts: RunOptions): Promise<RunContext> {
   const root = repoRoot(opts.repo);
-  const config = loadConfig(root, opts.overrides);
-  const paths = runPaths(config, runId);
+  const paths = runPaths(loadConfig(root, opts.overrides), runId);
   const manifestPath = `${paths.runDir}/manifest.json`;
   if (!fs.existsSync(manifestPath)) throw new HarnessError(`No manifest for run ${runId} at ${manifestPath}.`);
   const manifest = readJson<Manifest>(manifestPath);
+  manifest.overrides = merge(manifest.overrides ?? {}, opts.overrides);
+  const config = loadConfig(root, manifest.overrides);
   if (manifest.status !== "running" && manifest.status !== "failed") throw new HarnessError(`Run ${runId} is already ${manifest.status}.`);
   await checkModels(config);
   manifest.status = "running";

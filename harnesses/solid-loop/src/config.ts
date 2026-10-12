@@ -27,7 +27,7 @@ export interface Config {
 
 type Json = Record<string, unknown>;
 
-function merge(base: Json, override: Json): Json {
+export function merge(base: Json, override: Json): Json {
   const result: Json = { ...base };
   for (const [key, value] of Object.entries(override)) {
     const current = result[key];
