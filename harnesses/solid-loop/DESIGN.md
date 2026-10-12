@@ -72,7 +72,7 @@ The run id is the UTC timestamp plus the short commit SHA, e.g. `2026-10-12T1633
 | 3 | **Analyst review.** Review the remaining findings per the skill; add findings the metrics missed | analyst | `review.json` |
 | 4 | **Debate**, up to 3 rounds: doubter challenges, analyst responds, orchestrator applies concessions and revisions. Stops early when no challenge is open | doubter, analyst | `debate/round-N.challenges.json`, `debate/round-N.responses.json` |
 | 5 | **Judge.** Rule on challenges still open after the last round | judge | `verdicts.json` |
-| 6 | **Assemble.** Replay review, responses, and verdicts into the final decisions; the analyst rewrites the executive summary and recommendations to match them; render the report | code + analyst | `final-review.json`, `SOLID-RISK-PROFILE.md` |
+| 6 | **Assemble.** Replay review, responses, and verdicts into the final decisions; compute the ratings from them; the analyst rewrites the executive summary and recommendations to match the decisions and state the computed overall rating (validated); render the report | code + analyst | `final-review.json`, `SOLID-RISK-PROFILE.md` |
 | 7 | **Reconcile.** Compute register changes. Match review-added findings to existing items (matcher), then apply the reconciliation rules (section 7) | code + matcher | `register-changes.json`, updated `.tech-debt/items/`, `TECH-DEBT.md` |
 | 8 | **Propose.** Commit the run folder and register changes on the run branch, push to the target repo's remote, open a PR into the base branch with a summary of counts, new/resolved/reopened items, and every judged dispute | code | PR |
 

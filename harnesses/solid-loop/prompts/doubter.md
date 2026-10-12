@@ -41,6 +41,8 @@ Every challenge costs the analyst a turn, so a challenge must change the risk pi
 - replaces a recommendation that is wrong or would not work (`recommendation` with action `none`).
 
 Anything else is rejected when you submit: dismissed to Low, Low to Medium, a right decision with a weak reason, wording. Put those in `notes` (`target`, `note`, optional `evidence`). Notes are kept with the run for people to read; nobody answers them.
+
+A wrong reason is different from a weak one. When the code contradicts the stated reason for a dismissal or a downgrade (the reason says "no I/O" and the type saves to the database), the decision has lost its basis. If the finding's metric severity is {{material_severity}} or above, challenge it (`process` or `disposition`, proposing the outcome the evidence supports) instead of writing a note. Use a note only when the finding would land below {{material_severity}} either way.
 ## Criteria reference
 
 {{criteria}}

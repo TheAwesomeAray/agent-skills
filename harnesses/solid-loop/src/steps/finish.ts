@@ -17,15 +17,26 @@ export async function assembleStep(ctx: RunContext): Promise<void> {
   writeJson(decisionsPath, state.decisions.snapshot());
   const judged = fs.existsSync(ctx.file("verdicts.json"));
 
+  // Ratings depend only on the decisions, so compute them from a draft before the summary is written.
+  const draftPath = path.join(ctx.paths.scratchDir, "draft-review.json");
+  writeJson(draftPath, { schema_version: 1, ...state.decisions.toReview() });
+  const draft = report(ctx, draftPath, path.join(ctx.paths.scratchDir, "draft-report.md"));
+  if (draft.code !== 0) throw new HarnessError(`The assembled review was rejected by the analyzer:\n- ${reportErrors(draft).join("\n- ")}`, 2);
+  const ratings = parseRatings(draft.stdout);
+  const overall = ratings.overall ?? "";
+
   const analyst = await ctx.agent("analyst");
   const summary = await analyst.turn<Summary>("assemble", prompt(ctx, "analyst-summary", "submit_summary", {
     decisions_path: decisionsPath.replace(/\\/g, "/"),
     verdict_note: judged ? `, including the judge's rulings in \`${ctx.file("verdicts.json").replace(/\\/g, "/")}\`` : "",
+    ratings: ["overall", "srp", "ocp", "lsp", "isp", "dip"].filter((k) => ratings[k]).map((k) => `${k.toUpperCase()} ${ratings[k]}`).join(", "),
+    overall,
   }), {
     tool: "submit_summary",
     description: "Submit the final executive summary and prioritized recommendations.",
     schema: "summary",
-    check: () => [],
+    check: (s) => overall && !new RegExp(`\\b${overall}\\b`, "i").test(s.executive_summary)
+      ? [`executive_summary must state the computed overall rating, ${overall}, in those words; don't substitute a different level or a range.`] : [],
   });
   state.decisions.summary = summary;
 

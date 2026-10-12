@@ -584,14 +584,14 @@ static class Analyzer
 
         // Pass 1: build the type model (partial declarations merged by full name).
         var types = new Dictionary<string, TypeModel>();
-        var enums = new Dictionary<string, string>();
+        var enums = new Dictionary<string, EnumDeclarationSyntax>();
         var parseErrorFiles = new List<string>();
         foreach (var (full, rel) in files)
         {
             var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(full), path: rel);
             if (tree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error)) parseErrorFiles.Add(rel);
             var root = tree.GetRoot();
-            foreach (var e in root.DescendantNodes().OfType<EnumDeclarationSyntax>()) enums.TryAdd(e.Identifier.Text, Syn.FullName(e));
+            foreach (var e in root.DescendantNodes().OfType<EnumDeclarationSyntax>()) enums.TryAdd(e.Identifier.Text, e);
             foreach (var decl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             {
                 var name = Syn.FullName(decl);
@@ -648,9 +648,19 @@ static class Analyzer
         if (entityCap is not null && !Sev.Valid(entityCap)) throw new UserError($"srp.lcom.entity_max_severity must be one of: {string.Join(", ", Sev.Ascending)}.");
 
         var switchesByEnum = new Dictionary<string, List<(string Type, SyntaxNode Node)>>();
-        static string? EnumOf(ExpressionSyntax? e) => e is MemberAccessExpressionSyntax m
-            ? m.Expression switch { IdentifierNameSyntax i => i.Identifier.Text, MemberAccessExpressionSyntax mm => mm.Name.Identifier.Text, _ => null }
-            : null;
+        static string? EnumOf(ExpressionSyntax? e) => e switch
+        {
+            ParenthesizedExpressionSyntax p => EnumOf(p.Expression),
+            MemberAccessExpressionSyntax m => m.Expression switch { IdentifierNameSyntax i => i.Identifier.Text, MemberAccessExpressionSyntax mm => mm.Name.Identifier.Text, _ => null },
+            _ => null,
+        };
+        // `case (Color.Red):` parses as a parenthesized pattern in newer language versions.
+        static ExpressionSyntax? ConstantOf(PatternSyntax? p) => p switch
+        {
+            ParenthesizedPatternSyntax pp => ConstantOf(pp.Pattern),
+            ConstantPatternSyntax cp => cp.Expression,
+            _ => null,
+        };
         static string Lines(IEnumerable<SyntaxNode> nodes, int max = 8)
         {
             var lines = nodes.Select(Syn.Line).Distinct().ToList();
@@ -742,10 +752,10 @@ static class Analyzer
                         SwitchStatementSyntax s => s.Sections.SelectMany(sec => sec.Labels).Select(l => l switch
                         {
                             CaseSwitchLabelSyntax c => c.Value,
-                            CasePatternSwitchLabelSyntax { Pattern: ConstantPatternSyntax cp } => cp.Expression,
+                            CasePatternSwitchLabelSyntax cp => ConstantOf(cp.Pattern),
                             _ => null,
                         }),
-                        SwitchExpressionSyntax e => e.Arms.Select(a => a.Pattern is ConstantPatternSyntax cp ? cp.Expression : null),
+                        SwitchExpressionSyntax e => e.Arms.Select(a => ConstantOf(a.Pattern)),
                         _ => null,
                     };
                     var subject = labels?.Select(EnumOf).Where(x => x is not null && enums.ContainsKey(x))
@@ -846,9 +856,9 @@ static class Analyzer
         {
             var users = uses.Select(u => u.Type).Distinct().ToList();
             if (duplicated.Classify(users.Count) is not { } severity) continue;
-            var at = uses[0].Node;
+            var decl = enums[enumName];
             var where = uses.Select(u => $"{u.Type.Split('.')[^1]} ({u.Node.SyntaxTree.FilePath}:{Syn.Line(u.Node)})").ToList();
-            findings.Add(new Finding("", "", "ocp", "duplicated_switch", enums[enumName], at.SyntaxTree.FilePath, Syn.Line(at), users.Count, severity,
+            findings.Add(new Finding("", "", "ocp", "duplicated_switch", Syn.FullName(decl), decl.SyntaxTree.FilePath, Syn.Line(decl), users.Count, severity,
                 duplicated.For(severity)!.Value, $"{uses.Count} switches over {enumName} in {users.Count} types: {string.Join(", ", where.Take(8))}{(where.Count > 8 ? ", ..." : "")}"));
         }
 
