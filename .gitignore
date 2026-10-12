@@ -1,0 +1,12 @@
+# Eval and test workspaces created while developing skills
+*-workspace/
+
+# Analyzer output when a skill is run against this repo
+.solid-analysis/
+
+bin/
+obj/
+.vs/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,138 @@
+# SOLID analyzer thresholds (bundled defaults).
+#
+# To customize for a repository, create solid-thresholds.yaml at the repo root containing only
+# the values you want to change. Anything omitted falls back to this file. Example:
+#
+#   criteria:
+#     srp:
+#       class_lines: { low: 300, medium: 500, high: 800, critical: 1500 }
+#     dip:
+#       hard_coded_infrastructure: { enabled: false }
+#
+# Every criterion has up to four bands. A type whose value is >= a band's threshold gets a
+# finding at that severity; the highest band reached wins. Leave a band out to skip that
+# severity, or set `enabled: false` to turn the criterion off entirely.
+
+# Repo-relative globs (forward slashes, case-insensitive) that are never analyzed.
+exclude:
+  - "**/bin/**"
+  - "**/obj/**"
+  - "**/.solid-analysis/**"
+  - "**/*Test/**"
+  - "**/*Tests/**"
+  - "**/*.Test.*/**"
+  - "**/*.Tests.*/**"
+  - "**/Migrations/**"
+  - "**/*.g.cs"
+  - "**/*.g.i.cs"
+  - "**/*.Designer.cs"
+  - "**/*.generated.cs"
+  - "**/AssemblyInfo.cs"
+
+# Files where wiring up concrete classes is the point (DI registration, bootstrapping).
+# DIP criteria are skipped for types declared in these files.
+composition_roots:
+  - "**/Program.cs"
+  - "**/Startup.cs"
+  - "**/*Module.cs"
+  - "**/*Installer.cs"
+  - "**/*Bootstrapper.cs"
+  - "**/DependencyInjection.cs"
+  - "**/*ServiceCollectionExtensions.cs"
+
+# A repo class counts as a "service" (something that should be injected rather than newed up)
+# when it implements an interface or its name ends with one of these suffixes...
+service_type_suffixes: [Service, Repository, Client, Manager, Provider, Handler, Gateway, Store, Processor, Engine]
+# ...unless its name ends with one of these, which mark data carriers and framework types.
+non_service_type_suffixes: [Exception, Attribute, EventArgs, Options, Settings, Dto, Request, Response, Command, Query, Event, Message, Model]
+# Types whose job is to create objects; they may `new` services freely.
+factory_type_suffixes: [Factory, Builder]
+
+# Points per finding, used to roll findings up into ratings. Each level is roughly double the
+# one below so a single Critical outweighs a scattering of Lows.
+severity_points: { low: 1, medium: 3, high: 7, critical: 15 }
+
+# Ratings are based on weighted density: severity points per 10 types analyzed. Normalizing by
+# type count keeps a 50-type service and a 2,000-type monolith comparable. At these bands a
+# 100-type codebase reaches Medium at about 7 Medium findings, High at about 7 High findings,
+# and Critical at about 7 Critical findings.
+rating_bands: { medium: 2, high: 5, critical: 10 }
+
+# Relative weight of each principle in the overall rating (equal by default).
+principle_weights: { srp: 1, ocp: 1, lsp: 1, isp: 1, dip: 1 }
+
+criteria:
+  srp:
+    # Non-blank, non-comment lines in the type (all partial declarations combined). Classes past
+    # roughly 300 lines almost always carry more than one reason to change.
+    class_lines: { low: 200, medium: 300, high: 500, critical: 1000 }
+    # Public methods (excluding ToString/Equals/GetHashCode overrides). A wide public surface
+    # usually means several unrelated capabilities share one type.
+    public_methods: { low: 10, medium: 15, high: 25, critical: 40 }
+    # Parameters on the widest constructor (classes only; records are treated as data). More
+    # than about five injected collaborators is the classic sign of a class doing too much.
+    constructor_dependencies: { low: 5, medium: 6, high: 8, critical: 11 }
+    # Lack of cohesion (Henderson-Sellers LCOM, 0 = every method uses every field, 1 = methods
+    # share no fields). Values above about 0.8 suggest the class splits into independent parts.
+    # No critical band: cohesion alone is not strong enough evidence for Critical.
+    # Only measured when a class has at least min_methods instance methods and min_fields fields,
+    # because the metric is meaningless on tiny classes.
+    lcom: { low: 0.75, medium: 0.85, high: 0.95, min_methods: 4, min_fields: 2 }
+
+  ocp:
+    # Non-default cases in the largest switch statement/expression. Big switches over a type
+    # code or enum must be edited every time a new variant appears.
+    max_switch_arms: { low: 6, medium: 8, high: 12, critical: 20 }
+    # Runtime type checks (is/as, type patterns, GetType()) in the type, excluding Equals and
+    # CompareTo. Branching on concrete types instead of using polymorphism forces edits when a
+    # new subtype is added.
+    type_checks: { low: 2, medium: 3, high: 5, critical: 8 }
+    # Branches in the longest if/else-if chain. Long chains are often a hand-rolled switch on
+    # a variant that should be a strategy or polymorphic call.
+    else_if_chain: { low: 4, medium: 5, high: 7, critical: 10 }
+
+  lsp:
+    # Overrides that only throw NotImplementedException/NotSupportedException: the subtype
+    # cannot honor the base contract, so callers holding the base type will break.
+    not_implemented_overrides: { medium: 1, high: 2, critical: 4 }
+    # Members declared with `new` to hide a base member. Behavior then depends on the static
+    # type of the reference, which breaks substitutability.
+    hidden_members: { low: 1, medium: 2, high: 4 }
+    # Overrides with an empty body. Sometimes legitimate (no-op hooks), sometimes a refused
+    # bequest that silently drops behavior callers rely on.
+    empty_overrides: { low: 1, medium: 3, high: 5 }
+
+  isp:
+    # Members on an interface (methods, properties, events, indexers). Past about ten members,
+    # most implementers and callers use only a slice of the interface.
+    interface_members: { low: 8, medium: 10, high: 15, critical: 25 }
+    # Interface members an implementer refuses to implement (only throws NotImplemented/
+    # NotSupported). Direct evidence the interface is too broad for this implementer.
+    not_implemented_interface_members: { medium: 1, high: 2, critical: 4 }
+
+  dip:
+    # `new` of repo service classes inside other classes (outside composition roots and
+    # factories). The class is welded to a concrete implementation and cannot be tested or
+    # reconfigured without editing it.
+    concrete_instantiations: { low: 1, medium: 2, high: 4, critical: 7 }
+    # Constructor parameters typed as concrete repo service classes instead of abstractions.
+    concrete_constructor_dependencies: { medium: 1, high: 2, critical: 4 }
+    # Direct use of ambient infrastructure (clock, file system, environment, console, raw
+    # connections) instead of an injected abstraction. Patterns ending in ".*" match any member
+    # of that type, e.g. "File.*" matches File.ReadAllText.
+    hard_coded_infrastructure:
+      low: 1
+      medium: 3
+      high: 6
+      critical: 10
+      member_patterns:
+        - "DateTime.Now"
+        - "DateTime.UtcNow"
+        - "DateTime.Today"
+        - "DateTimeOffset.Now"
+        - "DateTimeOffset.UtcNow"
+        - "File.*"
+        - "Directory.*"
+        - "Environment.GetEnvironmentVariable"
+        - "Console.*"
+      new_types: [HttpClient, SqlConnection, SmtpClient, WebClient]
