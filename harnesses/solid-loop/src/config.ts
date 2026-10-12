@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Role } from "./types.ts";
+import type { Role, Severity } from "./types.ts";
 import { HarnessError, readJson } from "./util.ts";
 
 export const HARNESS_DIR = path.resolve(import.meta.dirname, "..");
@@ -16,7 +16,7 @@ export interface AnalyzerConfig {
 
 export interface Config {
   models: Record<Role, string>;
-  debate: { max_rounds: number; max_challenges_per_round: number; medium_low_sample_rate: number };
+  debate: { max_rounds: number; max_challenges_per_round: number; medium_low_sample_rate: number; material_severity: Severity };
   retries: { validation: number; startup: number; rejections_per_turn: number };
   timeouts_minutes: Record<Role, number>;
   git: { host: string; remote: string; base_branch: string | null; pr_repo: string | null };

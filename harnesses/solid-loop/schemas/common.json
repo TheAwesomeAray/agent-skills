@@ -20,14 +20,30 @@
         "principle": { "enum": ["srp", "ocp", "lsp", "isp", "dip"] },
         "severity": { "$ref": "#/definitions/severity" },
         "title": { "type": "string", "minLength": 1 },
-        "type": { "type": "string", "minLength": 1, "description": "Fully qualified type, namespace, or project the finding is about" },
-        "file": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1, "description": "Fully qualified name of the class, interface, record, or struct the finding is about" },
+        "file": { "type": "string", "pattern": "\\.[cC][sS]$", "description": "The .cs file that declares the type" },
         "line": { "type": "integer", "minimum": 1 },
         "details": { "type": "string", "minLength": 1 },
         "recommendation": { "type": "string" },
-        "evidence": { "$ref": "#/definitions/evidence_optional" }
+        "evidence": { "$ref": "#/definitions/evidence_optional" },
+        "related": { "$ref": "#/definitions/related" }
       }
     },
+    "related": { "type": "array", "items": { "type": "string" }, "description": "Ids of findings about the same root cause; the evidence is counted there, not again here" },
+    "out_of_scope_item": {
+      "type": "object",
+      "required": ["title", "category", "file", "details", "evidence"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "category": { "enum": ["security", "correctness", "concurrency", "performance", "reliability", "other"] },
+        "severity": { "$ref": "#/definitions/severity" },
+        "file": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 1 },
+        "details": { "type": "string", "minLength": 1 },
+        "evidence": { "$ref": "#/definitions/evidence" }
+      }
+    },
+    "out_of_scope": { "type": "array", "items": { "$ref": "#/definitions/out_of_scope_item" }, "description": "Real problems that are not design-principle violations. They never change SOLID severity." },
     "outcome": {
       "type": "object",
       "required": ["action"],

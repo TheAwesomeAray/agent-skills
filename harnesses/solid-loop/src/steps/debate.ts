@@ -3,9 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import type { RunContext } from "../context.ts";
 import { applyRound, replay, roundFile, thread, type DebateState } from "../debate.ts";
-import type { Decisions } from "../decisions.ts";
+import { isMaterial, type Decisions } from "../decisions.ts";
 import { json, pathList, prompt, skillReferences } from "../prompts.ts";
-import type { Challenge, Challenges, Responses, Verdicts } from "../types.ts";
+import type { Challenge, Challenges, Responses, Severity, Verdicts } from "../types.ts";
 import { sevRank, writeJson } from "../util.ts";
 import { checkEvidence } from "../validate.ts";
 
@@ -19,12 +19,15 @@ function history(ctx: RunContext, state: DebateState): string {
   return pathList(state.rounds.flatMap((r) => [roundFile(ctx, r.round, "challenges"), roundFile(ctx, r.round, "responses")]).filter((f) => fs.existsSync(f)));
 }
 
-/** Round 1 must account for every Critical/High decision, every dismissal, and a deterministic sample of Medium/Low. */
+/**
+ * Round 1 must account for every Critical/High decision, every dismissal of a finding the metrics rated at the
+ * materiality floor or above, and a deterministic sample of the rest.
+ */
 function coverage(ctx: RunContext, decisions: Decisions) {
-  const rate = ctx.config.debate.medium_low_sample_rate;
+  const { medium_low_sample_rate: rate, material_severity: floor } = ctx.config.debate;
   const sampled = (id: string) => parseInt(createHash("sha256").update(ctx.runId + id).digest("hex").slice(0, 8), 16) / 0xffffffff < rate;
   return decisions.debatable()
-    .filter((d) => d.dismissed || sevRank(d.severity) >= sevRank("high") || sampled(d.id))
+    .filter((d) => (d.dismissed && sevRank(d.metric_severity ?? d.severity) >= sevRank(floor)) || sevRank(d.severity) >= sevRank("high") || sampled(d.id))
     .map((d) => ({ id: d.id, label: d.label, decision: d.dismissed ? "dismissed" : d.severity, metric_severity: d.metric_severity, type: d.type, title: d.title }));
 }
 
@@ -47,22 +50,23 @@ export async function debateStep(ctx: RunContext): Promise<void> {
     const closed = new Set(state.rounds.flatMap((r) => r.challenges.challenges).map((c) => c.target && decisions.resolve(c.target)).filter((t): t is string => !!t && !allowedRepeat.has(t)));
 
     const roundInstructions = round === 1
-      ? `Read the code for every finding in this coverage list and either put its id in \`checked_and_sound\` or challenge it. You may also challenge findings outside the list and report missed violations.\n\n\`\`\`json\n${json(required)}\n\`\`\``
-      : `The analyst answered your round ${round - 1} challenges (\`${roundFile(ctx, round - 1, "responses").replace(/\\/g, "/")}\`). Conceded and revised challenges are closed. These were defended:\n\n\`\`\`json\n${json(state.open.map((c) => ({ challenge: c, response: previous?.responses.responses.find((r) => r.challenge_id === c.challenge_id) })))}\n\`\`\`\n\nFor each, either press it again as a new challenge with the same target and new evidence, or let it go, which settles it in the analyst's favor. You may also raise new issues the defenses revealed, but do not re-open findings that were already settled. Submit an empty \`challenges\` list if nothing is left to dispute; \`checked_and_sound\` may be empty this round.`;
+      ? `Read the code for every finding in this coverage list and account for it: put its id in \`checked_and_sound\`, challenge it, or (when your objection is not material) write a note about it. You may also challenge findings outside the list and report missed violations.\n\n\`\`\`json\n${json(required)}\n\`\`\``
+      : `The analyst answered your round ${round - 1} challenges (\`${roundFile(ctx, round - 1, "responses").replace(/\\/g, "/")}\`). Conceded and revised challenges are closed. These were defended:\n\n\`\`\`json\n${json(state.open.map((c) => ({ challenge: c, response: previous?.responses.responses.find((r) => r.challenge_id === c.challenge_id) })))}\n\`\`\`\n\nFor each, either press it again as a new challenge with the same target and new evidence, or let it go, which settles it in the analyst's favor. This round is only about these defended challenges: no new targets and no new missed violations (put anything new in \`notes\` or \`out_of_scope\`). Submit an empty \`challenges\` list if nothing is left to dispute; \`checked_and_sound\` may be empty this round.`;
 
     const doubter = await ctx.agent("doubter");
     const challenges = await doubter.turn<Challenges>(`debate-${round}`, prompt(ctx, "doubter", "submit_challenges", {
       metrics_path: ctx.file("metrics.json").replace(/\\/g, "/"),
       decisions_path: writeDecisions(ctx, decisions),
       history: history(ctx, state),
-      round, max_rounds: maxRounds, max_challenges: maxChallenges,
+      round, max_rounds: maxRounds, max_challenges: maxChallenges, material_severity: ctx.config.debate.material_severity,
       round_instructions: roundInstructions,
       criteria: refs.criteria,
     }), {
       tool: "submit_challenges",
       description: `Submit your round ${round} challenges and the ids you checked and found sound.`,
       schema: "challenges",
-      check: (c) => checkChallenges(c, round, maxChallenges, decisions, required.map((r) => r.id), closed, root),
+      check: (c) => checkChallenges(c, round, maxChallenges, decisions, required.map((r) => r.id), closed, root, ctx.config.debate.material_severity,
+        round === 1 ? undefined : { targets: allowedRepeat, missed: state.open.some((o) => o.target === null) }),
     });
     writeJson(roundFile(ctx, round, "challenges"), { schema_version: 1, ...challenges });
     ctx.log(`Round ${round}: ${challenges.challenges.length} challenge(s), ${challenges.checked_and_sound.length} checked and sound.`);
@@ -93,7 +97,28 @@ export async function debateStep(ctx: RunContext): Promise<void> {
   ctx.manifest.debate = { rounds: state.rounds.length, open_disputes: state.open.map((c) => c.challenge_id) };
 }
 
-function checkChallenges(c: Challenges, round: number, max: number, decisions: Decisions, required: string[], closed: Set<string>, root: string): string[] {
+/** Why a challenge is not worth debating, or undefined when it is. Rejected challenges belong in `notes`. */
+export function immaterial(ch: Challenge, decisions: Decisions, floor: Severity): string | undefined {
+  const toNotes = "Not material; record it in `notes` instead (notes are kept, not debated).";
+  if (ch.target === null) {
+    const sev = ch.proposed_outcome.finding?.severity;
+    return sev && sevRank(sev) < sevRank(floor) ? `a missed violation at ${sev} is below the ${floor} floor. ${toNotes}` : undefined;
+  }
+  const id = decisions.resolve(ch.target);
+  if (!id) return undefined;
+  if (ch.type === "recommendation" && ch.proposed_outcome.action === "none") {
+    return ch.proposed_outcome.recommendation ? undefined : "a recommendation challenge needs `proposed_outcome.recommendation`.";
+  }
+  const from = decisions.level(id)!;
+  const to = decisions.levelAfter(id, ch.proposed_outcome)!;
+  if (from === to) return `the proposed outcome leaves the decision at ${from}. ${toNotes}`;
+  return isMaterial(from, to, floor) ? undefined : `moving ${from} to ${to} does not change the risk picture. ${toNotes}`;
+}
+
+/** After round 1, only challenges the analyst defended may be pressed again. */
+interface Pressable { targets: Set<string>; missed: boolean }
+
+export function checkChallenges(c: Challenges, round: number, max: number, decisions: Decisions, required: string[], closed: Set<string>, root: string, floor: Severity, pressable?: Pressable): string[] {
   const errors: string[] = [];
   if (c.round !== round) errors.push(`round must be ${round}.`);
   if (c.challenges.length > max) errors.push(`At most ${max} challenges per round; you sent ${c.challenges.length}. Keep the highest-risk ones.`);
@@ -117,9 +142,25 @@ function checkChallenges(c: Challenges, round: number, max: number, decisions: D
       covered.add(target);
       if (closed.has(target)) errors.push(`${where}: '${ch.target}' was settled in an earlier round.`);
     }
+    const why = immaterial(ch, decisions, floor);
+    if (why) errors.push(`${where}: ${why}`);
+    if (pressable && (target ? !pressable.targets.has(target) : !pressable.missed))
+      errors.push(`${where}: after round 1 you may only press challenges the analyst defended (${[...pressable.targets].join(", ") || "none with a target"}); put anything new in \`notes\`.`);
+  });
+  (c.notes ?? []).forEach((n, i) => {
+    const where = `notes[${i}]`;
+    const id = n.target && decisions.resolve(n.target);
+    if (n.target && !id) errors.push(`${where}: unknown target '${n.target}'.`);
+    if (id) covered.add(id);
+    errors.push(...checkEvidence(root, n.evidence, where));
+  });
+  (c.out_of_scope ?? []).forEach((o, i) => {
+    const where = `out_of_scope[${i}]`;
+    errors.push(...checkEvidence(root, [{ file: o.file, line: o.line }], where));
+    errors.push(...checkEvidence(root, o.evidence, where));
   });
   const missing = required.filter((id) => !covered.has(id));
-  if (missing.length > 0) errors.push(`Coverage: these ids are neither in checked_and_sound nor challenged: ${missing.join(", ")}.`);
+  if (missing.length > 0) errors.push(`Coverage: these ids are not in checked_and_sound, a challenge, or a note: ${missing.join(", ")}.`);
   return errors;
 }
 
@@ -138,7 +179,7 @@ function checkResponses(r: Responses, round: number, challenges: Challenges, dec
       if (!resp.revised_outcome) errors.push(`${where}: 'revise' needs 'revised_outcome'.`);
       else errors.push(...decisions.checkOutcome(c.target, resp.revised_outcome, `${where}.revised_outcome`, root));
     }
-    if (resp.response === "defend" && resp.evidence.length === 0) errors.push(`${where}: 'defend' needs evidence.`);
+    if (resp.evidence.length === 0) errors.push(`${where}: '${resp.response}' needs evidence: cite the code you read to verify the challenge.`);
     errors.push(...checkEvidence(root, resp.evidence, where));
   });
   const missing = challenges.challenges.map((c) => c.challenge_id).filter((id) => !answered.has(id));

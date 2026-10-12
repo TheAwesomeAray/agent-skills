@@ -314,13 +314,15 @@ static class Syn
         _ => "class",
     };
 
-    public static string FullName(TypeDeclarationSyntax d)
+    public static string FullName(BaseTypeDeclarationSyntax d)
     {
         var parts = new List<string>();
         foreach (var a in d.AncestorsAndSelf())
         {
             if (a is TypeDeclarationSyntax t)
                 parts.Add(t.Identifier.Text + (t.TypeParameterList is { } tp ? $"<{string.Join(",", tp.Parameters.Select(p => p.Identifier.Text))}>" : ""));
+            else if (a is EnumDeclarationSyntax e)
+                parts.Add(e.Identifier.Text);
             else if (a is BaseNamespaceDeclarationSyntax ns)
                 parts.Add(ns.Name.ToString());
         }
@@ -482,6 +484,73 @@ static class Register
     }
 }
 
+// ---------------------------------------------------------------- projects
+
+sealed class ProjectModel
+{
+    public required string Name { get; init; }
+    public required string Path { get; init; }
+    public required string Rel { get; init; }
+    public required string Dir { get; init; }
+    public List<string> ProjectRefs { get; } = [];
+}
+
+static class Projects
+{
+    static readonly Regex ProjectRef = new("<ProjectReference\\s+Include\\s*=\\s*\"([^\"]+)\"", RegexOptions.IgnoreCase);
+    static readonly Regex SlnProject = new("^Project\\(\"[^\"]*\"\\)\\s*=\\s*\"[^\"]*\",\\s*\"([^\"]+\\.csproj)\"", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+    static readonly Regex SlnxProject = new("<Project\\s+Path\\s*=\\s*\"([^\"]+\\.csproj)\"", RegexOptions.IgnoreCase);
+    static readonly EnumerationOptions Recursive = new() { RecurseSubdirectories = true, IgnoreInaccessible = true };
+
+    static string Resolve(string baseDir, string relative) =>
+        System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, relative.Replace('\\', System.IO.Path.DirectorySeparatorChar)));
+
+    public static List<ProjectModel> Load(string repo, List<Regex> excludes)
+    {
+        var result = new List<ProjectModel>();
+        foreach (var path in Directory.EnumerateFiles(repo, "*.csproj", Recursive))
+        {
+            var rel = System.IO.Path.GetRelativePath(repo, path).Replace('\\', '/');
+            if (excludes.Any(r => r.IsMatch(rel))) continue;
+            var full = System.IO.Path.GetFullPath(path);
+            var dir = System.IO.Path.GetDirectoryName(full)!;
+            var p = new ProjectModel { Name = System.IO.Path.GetFileNameWithoutExtension(path), Path = full, Rel = rel, Dir = dir + System.IO.Path.DirectorySeparatorChar };
+            p.ProjectRefs.AddRange(ProjectRef.Matches(File.ReadAllText(path)).Select(m => Resolve(dir, m.Groups[1].Value)));
+            result.Add(p);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Projects that no solution includes and no included project references, directly or transitively: dead or
+    /// abandoned code. Empty when the repo has no solution file, because then nothing says what is built.
+    /// </summary>
+    public static HashSet<string> Orphans(string repo, List<ProjectModel> projects, List<Regex> excludes)
+    {
+        var byPath = projects.ToDictionary(p => p.Path, StringComparer.OrdinalIgnoreCase);
+        var roots = new List<string>();
+        foreach (var sln in Directory.EnumerateFiles(repo, "*.sln*", Recursive))
+        {
+            var rel = System.IO.Path.GetRelativePath(repo, sln).Replace('\\', '/');
+            if (excludes.Any(r => r.IsMatch(rel)) || !(sln.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || sln.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))) continue;
+            var pattern = sln.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase) ? SlnxProject : SlnProject;
+            var dir = System.IO.Path.GetDirectoryName(sln)!;
+            roots.AddRange(pattern.Matches(File.ReadAllText(sln)).Select(m => Resolve(dir, m.Groups[1].Value)).Where(byPath.ContainsKey));
+        }
+        if (roots.Count == 0) return [];
+
+        var reached = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<string>(roots);
+        while (queue.TryDequeue(out var current))
+            if (reached.Add(current) && byPath.TryGetValue(current, out var p))
+                foreach (var r in p.ProjectRefs) queue.Enqueue(r);
+        return projects.Where(p => !reached.Contains(p.Path)).Select(p => p.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static ProjectModel? Owner(List<ProjectModel> projects, string fullFile) =>
+        projects.Where(p => fullFile.StartsWith(p.Dir, StringComparison.OrdinalIgnoreCase)).MaxBy(p => p.Dir.Length);
+}
+
 // ---------------------------------------------------------------- analyze
 
 static class Analyzer
@@ -502,17 +571,28 @@ static class Analyzer
             .Select(f => (Full: f, Rel: Path.GetRelativePath(repo, f).Replace('\\', '/')))
             .ToList();
         var files = allFiles.Where(f => !excludes.Any(r => r.IsMatch(f.Rel))).ToList();
+
+        // Projects nothing builds are dead code: their findings would only be noise.
+        var projects = Projects.Load(repo, excludes);
+        var orphans = Json.Bool(config.Root["exclude_orphan_projects"], true) ? Projects.Orphans(repo, projects, excludes) : [];
+        var owners = files.ToDictionary(f => f.Rel, f => Projects.Owner(projects, Path.GetFullPath(f.Full)));
+        var orphanProjects = projects.Where(p => orphans.Contains(p.Path)).Select(p => p.Rel).OrderBy(r => r, StringComparer.Ordinal).ToList();
+        int orphanFileCount = files.Count(f => owners[f.Rel] is { } o && orphans.Contains(o.Path));
+        files = files.Where(f => !(owners[f.Rel] is { } o && orphans.Contains(o.Path))).ToList();
         if (files.Count == 0)
             throw new UserError($"No C# files to analyze under {repo} ({allFiles.Count} .cs files found, all excluded). Check the 'exclude' patterns.");
 
         // Pass 1: build the type model (partial declarations merged by full name).
         var types = new Dictionary<string, TypeModel>();
+        var enums = new Dictionary<string, string>();
         var parseErrorFiles = new List<string>();
         foreach (var (full, rel) in files)
         {
             var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(full), path: rel);
             if (tree.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error)) parseErrorFiles.Add(rel);
-            foreach (var decl in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
+            var root = tree.GetRoot();
+            foreach (var e in root.DescendantNodes().OfType<EnumDeclarationSyntax>()) enums.TryAdd(e.Identifier.Text, Syn.FullName(e));
+            foreach (var decl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             {
                 var name = Syn.FullName(decl);
                 if (!types.TryGetValue(name, out var t))
@@ -546,13 +626,31 @@ static class Analyzer
 
         // Pass 2: metrics and findings.
         var findings = new List<Finding>();
-        void Check(Criterion c, TypeModel t, double value, string details, SyntaxNode? at = null)
+        void Check(Criterion c, TypeModel t, double value, string details, SyntaxNode? at = null, (string Severity, string Reason)? cap = null)
         {
             if (c.Classify(value) is not { } severity) return;
+            if (cap is { } limit && Sev.Rank(severity) > Sev.Rank(limit.Severity) && c.For(limit.Severity) is not null)
+            {
+                details += $" (capped at {limit.Severity}: {limit.Reason})";
+                severity = limit.Severity;
+            }
             findings.Add(new Finding("", "", c.Principle, c.Name, t.FullName,
                 at?.SyntaxTree.FilePath ?? t.PrimaryFile, at is null ? t.Line : Syn.Line(at),
                 Math.Round(value, 2), severity, c.For(severity)!.Value, details));
         }
+
+        // Domain entities and aggregates hold many small per-property mutators, which LCOM reads as low cohesion.
+        var entityBases = config.C("srp", "lcom").List("entity_base_types").ToHashSet();
+        var classesByName = types.Values.Where(t => t.Kind == "class").GroupBy(t => t.Name).ToDictionary(g => g.Key, g => g.First());
+        bool IsEntity(TypeModel t, int depth = 0) => depth < 10 && t.BaseNames.Any(b =>
+            entityBases.Contains(b) || (classesByName.TryGetValue(b, out var bt) && bt != t && IsEntity(bt, depth + 1)));
+        var entityCap = Json.Str(config.C("srp", "lcom").Raw["entity_max_severity"]);
+        if (entityCap is not null && !Sev.Valid(entityCap)) throw new UserError($"srp.lcom.entity_max_severity must be one of: {string.Join(", ", Sev.Ascending)}.");
+
+        var switchesByEnum = new Dictionary<string, List<(string Type, SyntaxNode Node)>>();
+        static string? EnumOf(ExpressionSyntax? e) => e is MemberAccessExpressionSyntax m
+            ? m.Expression switch { IdentifierNameSyntax i => i.Identifier.Text, MemberAccessExpressionSyntax mm => mm.Name.Identifier.Text, _ => null }
+            : null;
         static string Lines(IEnumerable<SyntaxNode> nodes, int max = 8)
         {
             var lines = nodes.Select(Syn.Line).Distinct().ToList();
@@ -617,7 +715,8 @@ static class Analyzer
                 {
                     double avg = fields.Average(f => used.Count(u => u.Contains(f)));
                     double value = Math.Clamp((methods.Count - avg) / (methods.Count - 1), 0, 1);
-                    Check(lcom, t, value, $"LCOM-HS {value:0.00}: {methods.Count} instance methods, {fields.Count} fields and auto-properties; each is used by {avg:0.#} method(s) on average");
+                    Check(lcom, t, value, $"LCOM-HS {value:0.00}: {methods.Count} instance methods, {fields.Count} fields and auto-properties; each is used by {avg:0.#} method(s) on average",
+                        cap: entityCap is not null && IsEntity(t) ? (entityCap, "domain entity") : null);
                 }
             }
 
@@ -637,6 +736,25 @@ static class Analyzer
                         _ => 0,
                     };
                     if (arms > maxArms) { maxArms = arms; armsAt = n; }
+
+                    var labels = n switch
+                    {
+                        SwitchStatementSyntax s => s.Sections.SelectMany(sec => sec.Labels).Select(l => l switch
+                        {
+                            CaseSwitchLabelSyntax c => c.Value,
+                            CasePatternSwitchLabelSyntax { Pattern: ConstantPatternSyntax cp } => cp.Expression,
+                            _ => null,
+                        }),
+                        SwitchExpressionSyntax e => e.Arms.Select(a => a.Pattern is ConstantPatternSyntax cp ? cp.Expression : null),
+                        _ => null,
+                    };
+                    var subject = labels?.Select(EnumOf).Where(x => x is not null && enums.ContainsKey(x))
+                        .GroupBy(x => x!).Where(g => g.Count() >= 2).MaxBy(g => g.Count())?.Key;
+                    if (subject is not null)
+                    {
+                        if (!switchesByEnum.TryGetValue(subject, out var uses)) switchesByEnum[subject] = uses = [];
+                        uses.Add((t.FullName, n));
+                    }
                 }
                 if (armsAt is not null)
                     Check(config.C("ocp", "max_switch_arms"), t, maxArms, $"largest switch has {maxArms} non-default cases", armsAt);
@@ -722,6 +840,18 @@ static class Analyzer
             }
         }
 
+        // ---- OCP: the same enum switched on in several types (every new variant means editing all of them)
+        var duplicated = config.C("ocp", "duplicated_switch");
+        foreach (var (enumName, uses) in switchesByEnum)
+        {
+            var users = uses.Select(u => u.Type).Distinct().ToList();
+            if (duplicated.Classify(users.Count) is not { } severity) continue;
+            var at = uses[0].Node;
+            var where = uses.Select(u => $"{u.Type.Split('.')[^1]} ({u.Node.SyntaxTree.FilePath}:{Syn.Line(u.Node)})").ToList();
+            findings.Add(new Finding("", "", "ocp", "duplicated_switch", enums[enumName], at.SyntaxTree.FilePath, Syn.Line(at), users.Count, severity,
+                duplicated.For(severity)!.Value, $"{uses.Count} switches over {enumName} in {users.Count} types: {string.Join(", ", where.Take(8))}{(where.Count > 8 ? ", ..." : "")}"));
+        }
+
         // Labels (SRP-001) are for reading this run's report; ids are stable across runs.
         var counters = Principle.All.ToDictionary(p => p, _ => 0);
         var ordered = findings
@@ -762,6 +892,9 @@ static class Analyzer
                 ["files_analyzed"] = files.Count,
                 ["files_excluded"] = allFiles.Count - files.Count,
                 ["files_with_parse_errors"] = JsonSerializer.SerializeToNode(parseErrorFiles),
+                ["projects_found"] = projects.Count,
+                ["orphan_projects"] = JsonSerializer.SerializeToNode(orphanProjects),
+                ["files_in_orphan_projects"] = orphanFileCount,
                 ["types_analyzed"] = types.Count,
                 ["types_by_kind"] = new JsonObject(types.Values.GroupBy(t => t.Kind).Select(g => KeyValuePair.Create(g.Key, (JsonNode?)g.Count()))),
             },
@@ -786,15 +919,17 @@ static class Analyzer
         Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
         File.WriteAllText(outPath, doc.ToJsonString(jsonOptions));
 
-        PrintSummary(repo, config, files.Count, allFiles.Count - files.Count, types.Count, parseErrorFiles, sorted, outPath);
+        PrintSummary(repo, config, files.Count, allFiles.Count - files.Count, types.Count, parseErrorFiles, orphanProjects, sorted, outPath);
         return 0;
     }
 
-    static void PrintSummary(string repo, Config config, int analyzed, int excluded, int typeCount, List<string> parseErrors, List<Finding> findings, string outPath)
+    static void PrintSummary(string repo, Config config, int analyzed, int excluded, int typeCount, List<string> parseErrors, List<string> orphanProjects, List<Finding> findings, string outPath)
     {
         Console.WriteLine($"Repository: {repo}");
         Console.WriteLine($"Thresholds: {config.Source}");
         Console.WriteLine($"Analyzed {analyzed} files ({excluded} excluded), {typeCount} types.");
+        if (orphanProjects.Count > 0)
+            Console.WriteLine($"Skipped {orphanProjects.Count} project(s) no solution builds: {string.Join(", ", orphanProjects)}");
         if (parseErrors.Count > 0)
             Console.WriteLine($"WARNING: {parseErrors.Count} file(s) have syntax errors; their metrics may be incomplete: {string.Join(", ", parseErrors.Take(5))}");
 
@@ -839,6 +974,7 @@ sealed class ReportFinding
     public string? Reason { get; set; }
     public string? Recommendation { get; set; }
     public List<string> Evidence { get; set; } = [];
+    public List<string> Related { get; set; } = [];
     public string? RegisterStatus { get; init; }
     public bool CarriedForward { get; init; }
 }
@@ -908,7 +1044,11 @@ static class Reporter
         public string? Application;
         public string? ExecutiveSummary;
         public List<string> Recommendations = [];
+        public List<OutOfScope> OutOfScope = [];
     }
+
+    sealed record OutOfScope(string Title, string Category, string? Severity, string Location, string Details, string Source, List<string> Evidence);
+    static readonly string[] OutOfScopeCategories = ["security", "correctness", "concurrency", "performance", "reliability", "other"];
 
     // Optional `evidence: [{file, line, note}]`; files must exist in the analyzed repo and lines must be in range.
     static List<string> ReadEvidence(JsonNode? node, string where, string? repoPath, List<string> errors)
@@ -963,6 +1103,7 @@ static class Reporter
             }
             if (!seen.Add(f.Id)) { errors.Add($"{where}: '{id}' ({f.Label}) is reviewed more than once."); continue; }
             f.Evidence = ReadEvidence(item!["evidence"], where, repoPath, errors);
+            f.Related = Json.Strs(item["related"]);
 
             var action = Json.Str(item!["action"]);
             var reason = Json.Str(item["reason"]);
@@ -1005,6 +1146,8 @@ static class Reporter
             if (!Sev.Valid(severity)) errors.Add($"{where}: 'severity' must be one of: {string.Join(", ", Sev.Ascending)} (got '{severity}').");
             foreach (var (key, value) in new[] { ("title", title), ("type", type), ("file", file), ("details", details) })
                 if (string.IsNullOrWhiteSpace(value)) errors.Add($"{where}: '{key}' is required.");
+            if (!string.IsNullOrWhiteSpace(file) && !file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                errors.Add($"{where}: SOLID findings are about types: 'file' must be the .cs file that declares '{type}' (got '{file}'). Project, solution, and architecture concerns are out of scope.");
             var evidence = ReadEvidence(item["evidence"], where, repoPath, errors);
             if (errors.Count > 0 && (principle is null || !Principle.All.Contains(principle) || !Sev.Valid(severity))) continue;
 
@@ -1028,8 +1171,40 @@ static class Reporter
                 OriginalSeverity = severity!,
                 Details = details ?? "",
                 Recommendation = Json.Str(item["recommendation"]),
+                Related = Json.Strs(item["related"]),
                 FromReview = true,
             });
+        }
+
+        // `related` may name any finding, metric or added, by id or label.
+        var allById = new Dictionary<string, ReportFinding>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in findings) { allById[f.Id] = f; allById[f.Label] = f; }
+        foreach (var f in findings.Where(f => f.Related.Count > 0))
+        {
+            foreach (var r in f.Related.Where(r => !allById.ContainsKey(r))) errors.Add($"{f.Label} ({f.Id}): 'related' names unknown finding '{r}'.");
+            f.Related = f.Related.Where(allById.ContainsKey).Select(r => allById[r].Label).Distinct().ToList();
+        }
+
+        var outOfScope = root["out_of_scope"] as JsonArray ?? [];
+        for (int i = 0; i < outOfScope.Count; i++)
+        {
+            var item = outOfScope[i] as JsonObject;
+            var where = $"out_of_scope[{i}]";
+            if (item is null) { errors.Add($"{where}: must be an object."); continue; }
+            var title = Json.Str(item["title"]);
+            var category = Json.Str(item["category"])?.ToLowerInvariant();
+            var severity = Json.Str(item["severity"])?.ToLowerInvariant();
+            var file = Json.Str(item["file"]);
+            var details = Json.Str(item["details"]);
+            foreach (var (key, value) in new[] { ("title", title), ("file", file), ("details", details) })
+                if (string.IsNullOrWhiteSpace(value)) errors.Add($"{where}: '{key}' is required.");
+            if (category is null || !OutOfScopeCategories.Contains(category)) errors.Add($"{where}: 'category' must be one of: {string.Join(", ", OutOfScopeCategories)} (got '{category}').");
+            if (severity is not null && !Sev.Valid(severity)) errors.Add($"{where}: 'severity' must be one of: {string.Join(", ", Sev.Ascending)} (got '{severity}').");
+            var line = (int)(Json.Num(item["line"]) ?? 0);
+            var location = string.IsNullOrWhiteSpace(file) ? "" :
+                ReadEvidence(new JsonArray(new JsonObject { ["file"] = file, ["line"] = line }), where, repoPath, errors).FirstOrDefault() ?? "";
+            var evidence = ReadEvidence(item["evidence"], where, repoPath, errors);
+            review.OutOfScope.Add(new OutOfScope(title ?? "", category ?? "other", severity, location, details ?? "", Json.Str(item["source"]) ?? "reviewer", evidence));
         }
         return errors;
     }
@@ -1172,6 +1347,7 @@ static class Reporter
                 if (f.Severity != f.OriginalSeverity) L($"- **Severity adjusted** from {Sev.Title(f.OriginalSeverity)} to {Sev.Title(f.Severity)}: {f.Reason}");
                 else if (!string.IsNullOrWhiteSpace(f.Reason)) L($"- **Reviewer note:** {f.Reason}");
                 if (f.Evidence.Count > 0) L($"- **Reviewer evidence:** {string.Join("; ", f.Evidence)}");
+                if (f.Related.Count > 0) L($"- **Related:** {string.Join(", ", f.Related)} (same root cause; counted once)");
                 if (!string.IsNullOrWhiteSpace(f.Recommendation)) L($"- **Recommendation:** {f.Recommendation}");
                 L();
             }
@@ -1183,13 +1359,27 @@ static class Reporter
                 L("|---|---|---|---|---|---|---:|---|");
                 foreach (var f in minor)
                 {
-                    var notes = string.Join(" ", new[] { f.FromReview ? f.Details : null, f.Severity != f.OriginalSeverity ? $"Adjusted from {f.OriginalSeverity}: {f.Reason}" : f.Reason, f.Recommendation }
+                    var notes = string.Join(" ", new[] { f.FromReview ? f.Details : null, f.Severity != f.OriginalSeverity ? $"Adjusted from {f.OriginalSeverity}: {f.Reason}" : f.Reason, f.Recommendation,
+                            f.Related.Count > 0 ? $"Related: {string.Join(", ", f.Related)}." : null }
                         .Where(s => !string.IsNullOrWhiteSpace(s)));
                     if (notes.Length == 0) notes = f.Details;
                     L($"| {f.Label} | `{f.Id}` | {Sev.Title(f.Severity)} | `{Md(ShortType(f.Type))}` | {Loc(f)} | {Md(f.Criterion)} | {(f.Value is { } v ? Fmt.Num(v) : "")} | {Md(notes)} |");
                 }
                 L();
             }
+        }
+
+        if (review.OutOfScope.Count > 0)
+        {
+            L("## Outside SOLID scope");
+            L();
+            L("Real problems found during review that are not design-principle violations (security, correctness, concurrency, ...). They do not count toward the ratings; track them separately.");
+            L();
+            L("| Category | Severity | Issue | Location | Details | Reported by |");
+            L("|---|---|---|---|---|---|");
+            foreach (var o in review.OutOfScope)
+                L($"| {Sev.Title(o.Category)} | {(o.Severity is null ? "" : Sev.Title(o.Severity))} | {Md(o.Title)} | {o.Location} | {Md(o.Details)}{(o.Evidence.Count > 0 ? " Evidence: " + Md(string.Join("; ", o.Evidence)) : "")} | {o.Source} |");
+            L();
         }
 
         var dismissed = all.Where(f => f.Dismissed).ToList();

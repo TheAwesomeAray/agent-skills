@@ -31,6 +31,19 @@ Rules:
 - At most {{max_challenges}} challenges, ordered by how much they would change the risk picture. Ids are `R{{round}}-C01`, `R{{round}}-C02`, and so on.
 - Do not challenge thresholds or configuration; challenge decisions about the code.
 
+## Only challenge what matters
+
+Every challenge costs the analyst a turn, so a challenge must change the risk picture. A challenge is material when its proposed outcome:
+
+- moves a finding into or out of High/Critical, or changes anything about a Critical finding;
+- flips keep/dismiss on a finding kept at {{material_severity}} or above;
+- adds a missed violation at {{material_severity}} or above; or
+- replaces a recommendation that is wrong or would not work (`recommendation` with action `none`).
+
+Anything else is rejected when you submit: dismissed to Low, Low to Medium, a right decision with a weak reason, wording. Put those in `notes` (`target`, `note`, optional `evidence`). Notes are kept with the run for people to read; nobody answers them.
+
+Problems that are real but not design-principle violations (security holes, race conditions, logic bugs, performance) go in `out_of_scope`, never into a severity challenge. See the scope rule above.
+
 ## Criteria reference
 
 {{criteria}}

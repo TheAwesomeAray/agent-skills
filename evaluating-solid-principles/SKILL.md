@@ -1,6 +1,6 @@
 ---
 name: evaluating-solid-principles
-description: Evaluates a C# / .NET application for SOLID principle violations (Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion) against configurable per-criterion thresholds and produces a Markdown risk profile with Low/Medium/High/Critical ratings per principle and overall. Use this skill whenever the user asks to assess, audit, or review a C# codebase for SOLID compliance, design quality, architectural risk, god classes, coupling, fat interfaces, or technical debt, wants a risk profile or design health report for a .NET repo, or wants to set or tune SOLID thresholds, even if they don't say "SOLID" explicitly.
+description: Evaluates a C# / .NET application for SOLID principle violations (Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion) against configurable per-criterion thresholds and produces a Markdown risk profile with Low/Medium/High/Critical ratings per principle and overall. Use this skill whenever the user asks to assess, audit, or review a C# codebase for SOLID compliance, class-level design quality, god classes, coupling, fat interfaces, or technical debt, wants a risk profile or design health report for a .NET repo, or wants to set or tune SOLID thresholds, even if they don't say "SOLID" explicitly.
 ---
 
 # Evaluating SOLID principles
@@ -8,6 +8,14 @@ description: Evaluates a C# / .NET application for SOLID principle violations (S
 A Roslyn-based script measures every type in the repo and flags threshold breaches. You then review those findings against the code, dismiss false positives, adjust severity where context warrants, and add violations the metrics can't see. The script rolls everything up into a risk profile.
 
 Metrics alone are noisy (a 600-line parser can be perfectly cohesive) and judgment alone isn't repeatable. The value of this skill comes from combining the two, so don't skip the review step.
+
+## Scope
+
+This skill covers SOLID at the level of types and their members: classes, interfaces, records, and structs, their methods, constructors, and fields, and the dependencies one type takes on another. Every finding is about one type declared in a `.cs` file.
+
+Out of scope: project and assembly references, layering, solution or folder structure, bounded contexts, build configuration, and architecture in general. Don't open `.csproj` or `.sln` files to look for violations, and don't add findings about them (the script rejects added findings whose `file` isn't a `.cs` file). If the user asks for an architecture review, say this skill doesn't do one.
+
+Problems that aren't SOLID violations (security holes, race conditions, logic bugs, performance) go in the review's optional `out_of_scope` list. They never change a SOLID finding's severity.
 
 ## Requirements
 
@@ -53,6 +61,8 @@ This writes `<repo>/.solid-analysis/solid-metrics.json` and prints counts by pri
 
 Each finding has two names. `id` (e.g. `solid-7f3a9c`) is a hash of the principle, criterion, and type, so it stays the same across runs, edits, and file moves. `label` (e.g. `SRP-001`) is a readable position in this run's report and changes between runs.
 
+When the repo has a solution file (`.sln` or `.slnx`), projects that no solution builds (directly or through project references) are skipped and listed in the output. Set `exclude_orphan_projects: false` to analyze them anyway. This only decides which files get measured; it never produces findings.
+
 Read the printed warnings. Unknown keys in the user's thresholds file usually mean a typo, so tell the user. Files with syntax errors produce incomplete metrics for those files.
 
 If the run reports no files, the exclude globs filtered everything. Check the globs against the repo layout.
@@ -66,7 +76,6 @@ Work through `solid-metrics.json`:
 1. **Every Critical and High finding:** open the code and decide whether to keep it, adjust its severity, or dismiss it. These drive the rating, so each one needs a look.
 2. **Medium and Low findings:** spot-check them, prioritizing types that also have higher findings. If a criterion produces the same false positive repeatedly (e.g. every `*Mapper` class trips `class_lines`), dismiss those findings and suggest a threshold or exclude change in your recommendations.
 3. **Hotspots:** types with findings across several principles. Read these closely and apply the judgment checks from `references/criteria.md`. Record real violations as added findings.
-4. **Repo-level checks the per-type metrics miss:** whether core/domain projects reference infrastructure packages (check the `.csproj` files), and whether the same type-code switch is duplicated across classes.
 
 Base every decision on what you actually read in the code, and keep the reasons specific: "DTO mapping table, no logic" rather than "false positive".
 
@@ -88,11 +97,17 @@ Save to `<repo>/.solid-analysis/solid-review.json`:
   "added": [
     {
       "principle": "dip", "severity": "high",
-      "title": "Domain project references EF Core",
-      "type": "Acme.Domain", "file": "src/Acme.Domain/Acme.Domain.csproj", "line": 12,
+      "title": "Pricing rules call the static ServiceLocator",
+      "type": "Acme.Orders.PricingService", "file": "src/Acme/Orders/PricingService.cs", "line": 58,
       "details": "What you observed and why it violates the principle.",
-      "recommendation": "Concrete next step."
+      "recommendation": "Concrete next step.",
+      "related": ["DIP-004"]
     }
+  ],
+  "out_of_scope": [
+    { "title": "SQL built by string concatenation", "category": "security", "severity": "high",
+      "file": "src/Acme/Orders/OrderQueries.cs", "line": 31, "details": "Customer name is concatenated into the WHERE clause.",
+      "evidence": [{ "file": "src/Acme/Orders/OrderQueries.cs", "line": 31 }] }
   ],
   "recommendations": ["Top 3-5 prioritized actions across the codebase."]
 }
@@ -102,7 +117,9 @@ Save to `<repo>/.solid-analysis/solid-review.json`:
 - `action` is `keep`, `dismiss`, or `adjust`. `dismiss` and `adjust` require a `reason`, and `adjust` also requires a `severity`.
 - `evidence` is optional on reviewed and added findings: `file` paths relative to the repo, an optional `line`, and a `note`. The script rejects files that don't exist and lines past the end of the file, and the report shows the evidence under each High and Critical finding.
 - `recommendation` is optional, but give one for every Critical and High finding you keep, because those are what readers act on.
-- `added` findings require `principle` (srp/ocp/lsp/isp/dip), `severity`, `title`, `type`, `file`, and `details`. Use the severity rubric in `references/criteria.md`.
+- `added` findings require `principle` (srp/ocp/lsp/isp/dip), `severity`, `title`, `type`, `file`, and `details`. `type` is the fully qualified class, interface, record, or struct, and `file` is the `.cs` file that declares it. Use the severity rubric in `references/criteria.md`.
+- `related` is optional on reviewed and added findings: ids or labels of other findings that describe the same root problem (e.g. an SRP and a DIP finding on one controller). The report links them so readers fix them together.
+- `out_of_scope` is optional: problems you noticed that aren't SOLID violations. Each needs `title`, `category` (security, correctness, concurrency, performance, reliability, or other), `file`, and `details`; `severity`, `line`, and `evidence` are optional. The report lists them in their own section and they don't affect any rating.
 - `executive_summary` is required. Write it after reviewing, so it reflects the reviewed picture rather than the raw counts.
 - Optional: `"application": "Display Name"` overrides the report title, which defaults to the repo folder name.
 

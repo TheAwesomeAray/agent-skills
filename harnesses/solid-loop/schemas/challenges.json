@@ -18,6 +18,20 @@
           "evidence": { "$ref": "common.json#/definitions/evidence" }
         }
       }
-    }
+    },
+    "notes": {
+      "type": "array",
+      "description": "Observations that are correct but not material: recorded in the run, never debated",
+      "items": {
+        "type": "object",
+        "required": ["target", "note"],
+        "properties": {
+          "target": { "type": ["string", "null"], "description": "Finding id, or null" },
+          "note": { "type": "string", "minLength": 1 },
+          "evidence": { "$ref": "common.json#/definitions/evidence_optional" }
+        }
+      }
+    },
+    "out_of_scope": { "$ref": "common.json#/definitions/out_of_scope" }
   }
 }

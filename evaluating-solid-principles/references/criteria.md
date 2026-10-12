@@ -3,12 +3,19 @@
 How to judge each metric finding, which false positives to dismiss, and what to look for that the metrics cannot see.
 
 ## Contents
+- Scope
 - Severity rubric (for adjusted and added findings)
 - SRP: class_lines, public_methods, constructor_dependencies, lcom, judgment checks
-- OCP: max_switch_arms, type_checks, else_if_chain, judgment checks
+- OCP: max_switch_arms, type_checks, else_if_chain, duplicated_switch, judgment checks
 - LSP: not_implemented_overrides, hidden_members, empty_overrides, judgment checks
 - ISP: interface_members, not_implemented_interface_members, judgment checks
 - DIP: concrete_instantiations, concrete_constructor_dependencies, hard_coded_infrastructure, judgment checks
+
+---
+
+## Scope
+
+Every check below is about one type and its members, or the dependencies one type takes on another. A finding names a class, interface, record, or struct and the `.cs` file that declares it. Project references, layering, solution structure, and other architecture concerns are out of scope: don't investigate them, don't raise or lower a finding because of them, and don't add findings about them. Non-design problems you notice (security, correctness, concurrency, performance) go in `out_of_scope` and don't affect severity.
 
 ---
 
@@ -18,7 +25,7 @@ Use this when adjusting a metric finding or assigning severity to a finding you 
 
 | Severity | Meaning |
 |---|---|
-| Critical | Actively causes or will cause defects, or blocks change in a central part of the system: a god class every feature touches, a subtype that throws on a base-class call the code really makes, business logic welded to infrastructure in a core flow. |
+| Critical | Actively causes or will cause defects, or blocks change in a central part of the system: a god class every feature touches, a subtype that throws on a base-class call the code really makes, a class whose business rules are welded to the database or HTTP calls it makes itself in a core flow. |
 | High | A clear violation in code that changes often or sits on an important path. Fixing it later will cost noticeably more than fixing it now. |
 | Medium | A real violation with limited blast radius: a peripheral class, a stable area, or a pattern that hurts testability more than correctness. |
 | Low | A smell worth knowing about. Acceptable in context, or cheap to fix when the code is next touched. |
@@ -40,6 +47,7 @@ Adjust a metric finding by one level when context clearly warrants it (how centr
 
 **lcom.** 1.0 means no field is shared by two methods: the class is several classes sharing a name. Group methods by the fields they touch; each group is a candidate class. Use those groups in the recommendation. State includes fields, auto-properties that some method uses, and primary constructor parameters; a method that reads a computed property is credited with the state behind it.
 - Dismiss or lower: classes whose fields are all used through one private helper (the metric only sees direct references), stateless "service" classes whose single dependency is used once per method, and domain entities whose methods are small per-property mutators (`Rename`, `ChangeAddress`) guarding one invariant each.
+- Entities deriving from one of `entity_base_types` (directly or through other repo classes) are already capped at `entity_max_severity` (low by default). Raise one only if it mixes in unrelated work such as I/O, formatting, or another aggregate's rules.
 
 **Judgment checks** (add findings when you see these in hotspots):
 - Mixed abstraction levels in one class: business rules next to SQL, HTTP, or file formatting.
@@ -57,9 +65,11 @@ Adjust a metric finding by one level when context clearly warrants it (how centr
 **else_if_chain.** Same question as switches: does adding a case mean editing this chain?
 - Dismiss or lower: validation sequences where each branch checks a different condition rather than a different variant of the same thing.
 
+**duplicated_switch.** The number of types that switch on the same repo enum. Reported once per enum, on the enum. Every new value means finding and editing each of those switches. Check whether the switches choose behavior (keep; recommend moving the behavior onto a type per variant or one strategy map) or only translate the value for display or storage.
+- Dismiss or lower: switches that are all mappings at boundaries (to strings, database codes, DTOs), and enums over a closed set that will not grow.
+
 **Judgment checks:**
-- The same switch over a type code or enum duplicated in several classes (shotgun surgery on every new variant).
-- Behavior selected by string or enum flags passed through several layers.
+- Behavior selected by string or enum flags passed down through a chain of method calls, so each method branches on the flag.
 - Classes that must be edited (not extended) to add a new rule, format, or provider.
 
 ## LSP: Liskov Substitution
@@ -102,6 +112,6 @@ Adjust a metric finding by one level when context clearly warrants it (how centr
 - Dismiss or lower: the code *is* the infrastructure adapter (a `FileSystemStore` calling `File.*` is fine), CLI entry points writing to the console, and logging-setup code. Keep or raise when business logic reads `DateTime.Now` or touches the file system directly, since that logic becomes untestable.
 
 **Judgment checks:**
-- Domain or application projects referencing infrastructure packages (EF Core, HTTP clients, cloud SDKs) directly. Check the `.csproj` references of core projects.
+- Business classes that use infrastructure types directly in their members (a `DbContext`, `HttpClient`, or cloud SDK client as a field, parameter, or local) instead of depending on an abstraction.
 - Static service locators (`ServiceLocator.Get<T>()`, `IServiceProvider` injected into business classes and resolved at runtime).
-- Abstractions owned by the low-level module rather than the consumer (the interface sits next to its single implementation in the infrastructure project).
+- Interfaces shaped around one implementation rather than the needs of the class that consumes them (members that leak the implementation's storage or protocol details).

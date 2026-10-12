@@ -1,6 +1,25 @@
 import { addedFindingId } from "./ids.ts";
-import type { AddedFinding, MetricFinding, Metrics, Outcome, Review, ReviewedEntry, Severity, Summary } from "./types.ts";
+import type { AddedFinding, MetricFinding, Metrics, OutOfScopeItem, Outcome, Review, ReviewedEntry, Severity, Summary } from "./types.ts";
+import { sevRank } from "./util.ts";
 import { checkEvidence } from "./validate.ts";
+
+/** Where a finding stands: dismissed, or kept at a severity. */
+export type Level = "dismissed" | Severity;
+
+/**
+ * Whether moving a finding from one level to another is worth a debate: it crosses into or out of high/critical,
+ * touches critical, or flips keep/dismiss on a finding kept at `floor` or above. Moves among dismissed, low and
+ * (with the default floor) medium are not.
+ */
+export function isMaterial(from: Level, to: Level, floor: Severity): boolean {
+  if (from === to) return false;
+  const high = (l: Level) => l === "high" || l === "critical";
+  if (high(from) !== high(to) || from === "critical" || to === "critical") return true;
+  const kept = from === "dismissed" ? to : to === "dismissed" ? from : undefined;
+  return kept !== undefined && kept !== "dismissed" && sevRank(kept) >= sevRank(floor);
+}
+
+const outOfScopeKey = (o: OutOfScopeItem) => `${o.file.toLowerCase()}|${o.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
 
 export interface CurrentDecision {
   id: string;
@@ -28,10 +47,12 @@ export class Decisions {
   private readonly prefix: string;
   summary: Summary;
   readonly registerChecks: Review["register_checks"];
+  private readonly outOfScope = new Map<string, OutOfScopeItem>();
 
   constructor(metrics: Metrics, review: Review, prefix: string) {
     this.prefix = prefix;
     this.registerChecks = review.register_checks;
+    this.addOutOfScope(review.out_of_scope, "analyst");
     this.metrics = new Map(metrics.findings.map((f) => [f.id, f]));
     this.byLabel = new Map(metrics.findings.map((f) => [f.label.toUpperCase(), f.id]));
     this.carried = new Set(metrics.findings.filter((f) => f.carried_forward).map((f) => f.id));
@@ -50,6 +71,32 @@ export class Decisions {
 
   addedId(finding: AddedFinding): string {
     return finding.id ?? addedFindingId(this.prefix, finding.principle, finding.type, finding.title);
+  }
+
+  /** First report of the same problem (same file, same title) wins. */
+  addOutOfScope(items: OutOfScopeItem[] | undefined, source: OutOfScopeItem["source"]): void {
+    for (const item of items ?? []) {
+      const key = outOfScopeKey(item);
+      if (!this.outOfScope.has(key)) this.outOfScope.set(key, { ...item, source: item.source ?? source });
+    }
+  }
+
+  /** The finding's current level, or undefined for an unknown id. */
+  level(id: string): Level | undefined {
+    const d = this.current(id);
+    return d && (d.dismissed ? "dismissed" : d.severity);
+  }
+
+  /** The level `outcome` would put the finding at. */
+  levelAfter(id: string, outcome: Outcome): Level | undefined {
+    const d = this.current(id);
+    if (!d) return undefined;
+    switch (outcome.action) {
+      case "dismiss": return "dismissed";
+      case "keep": return d.metric_severity ?? d.severity;
+      case "adjust": return outcome.severity ?? (d.dismissed ? "dismissed" : d.severity);
+      default: return d.dismissed ? "dismissed" : d.severity;
+    }
   }
 
   private addFinding(finding: AddedFinding): string {
@@ -123,18 +170,19 @@ export class Decisions {
     const metric = this.metrics.get(id)!;
     const previous = this.reviewed.get(id);
     const evidence = previous?.evidence;
+    const related = previous?.related ? { related: previous.related } : {};
     const recommendation = outcome.recommendation ?? previous?.recommendation;
     switch (outcome.action) {
       case "keep":
-        this.reviewed.set(id, { id, action: "keep", reason: previous?.action === "keep" ? previous.reason : reason, recommendation, evidence });
+        this.reviewed.set(id, { id, action: "keep", reason: previous?.action === "keep" ? previous.reason : reason, recommendation, evidence, ...related });
         break;
       case "dismiss":
-        this.reviewed.set(id, { id, action: "dismiss", reason, evidence });
+        this.reviewed.set(id, { id, action: "dismiss", reason, evidence, ...related });
         break;
       case "adjust":
         this.reviewed.set(id, outcome.severity === metric.severity
-          ? { id, action: "keep", reason, recommendation, evidence }
-          : { id, action: "adjust", severity: outcome.severity, reason, recommendation, evidence });
+          ? { id, action: "keep", reason, recommendation, evidence, ...related }
+          : { id, action: "adjust", severity: outcome.severity, reason, recommendation, evidence, ...related });
         break;
       case "none":
         if (outcome.recommendation) this.reviewed.set(id, { ...(previous ?? { id, action: "keep", evidence }), recommendation });
@@ -149,6 +197,7 @@ export class Decisions {
       added: [...this.added.values()],
       recommendations: this.summary.recommendations,
       ...(this.registerChecks ? { register_checks: this.registerChecks } : {}),
+      ...(this.outOfScope.size > 0 ? { out_of_scope: [...this.outOfScope.values()] } : {}),
     };
   }
 

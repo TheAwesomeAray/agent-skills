@@ -29,6 +29,10 @@ exclude:
   - "**/*.generated.cs"
   - "**/AssemblyInfo.cs"
 
+# Skip projects that no solution file (.sln/.slnx) includes and no included project references, directly or
+# transitively. They are not built, so their findings are noise. Has no effect when the repo has no solution file.
+exclude_orphan_projects: true
+
 # Files where wiring up concrete classes is the point (DI registration, bootstrapping).
 # DIP criteria are skipped for types declared in these files.
 composition_roots:
@@ -79,7 +83,17 @@ criteria:
     # No critical band: cohesion alone is not strong enough evidence for Critical.
     # Only measured when a class has at least min_methods instance methods and min_fields fields,
     # because the metric is meaningless on tiny classes.
-    lcom: { low: 0.75, medium: 0.85, high: 0.95, min_methods: 4, min_fields: 2 }
+    # Domain entities and aggregates (classes deriving, directly or through repo classes, from one of
+    # entity_base_types) are capped at entity_max_severity: their small per-property mutators read as low
+    # cohesion even when the entity guards one consistent set of invariants.
+    lcom:
+      low: 0.75
+      medium: 0.85
+      high: 0.95
+      min_methods: 4
+      min_fields: 2
+      entity_max_severity: low
+      entity_base_types: [Entity, AggregateRoot, BaseEntity, EntityBase, AggregateRootBase, AuditableEntity]
 
   ocp:
     # Non-default cases in the largest switch statement/expression. Big switches over a type
@@ -92,6 +106,9 @@ criteria:
     # Branches in the longest if/else-if chain. Long chains are often a hand-rolled switch on
     # a variant that should be a strategy or polymorphic call.
     else_if_chain: { low: 4, medium: 5, high: 7, critical: 10 }
+    # Number of types that switch on the same repo enum (two or more case labels from it). Every new
+    # variant means finding and editing all of them. Reported once per enum.
+    duplicated_switch: { medium: 3, high: 5, critical: 8 }
 
   lsp:
     # Overrides that only throw NotImplementedException/NotSupportedException: the subtype

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import type { RunContext } from "./context.ts";
 import { Decisions } from "./decisions.ts";
-import type { Challenge, ChallengeResponse, Challenges, Metrics, Responses, Review, Verdicts } from "./types.ts";
+import type { Challenge, ChallengeResponse, Challenges, DoubterNote, Metrics, Responses, Review, Verdicts } from "./types.ts";
 import { readJson } from "./util.ts";
 import { citationKeys } from "./validate.ts";
 
@@ -27,6 +27,8 @@ export interface DebateState {
   open: Challenge[];
   /** Citations the analyst has already made, per finding; a defense must add one. */
   cited: Map<string, Set<string>>;
+  /** Doubter observations recorded without debate. */
+  notes: (DoubterNote & { round: number })[];
 }
 
 export const roundFile = (ctx: RunContext, round: number, kind: "challenges" | "responses" | "outcomes") =>
@@ -72,9 +74,12 @@ export function replay(ctx: RunContext): DebateState {
   for (const a of decisions.added.values()) cited.set(a.id, new Set(citationKeys(a.evidence)));
 
   const rounds: RoundRecord[] = [];
+  const notes: DebateState["notes"] = [];
   let open: Challenge[] = [];
   for (let round = 1; fs.existsSync(roundFile(ctx, round, "challenges")); round++) {
     const challenges = readJson<Challenges>(roundFile(ctx, round, "challenges"));
+    decisions.addOutOfScope(challenges.out_of_scope, "doubter");
+    notes.push(...(challenges.notes ?? []).map((n) => ({ round, ...n })));
     if (challenges.challenges.length === 0) { rounds.push({ round, challenges, responses: { round, responses: [] }, applied: [] }); open = []; break; }
     if (!fs.existsSync(roundFile(ctx, round, "responses"))) break;
     const responses = readJson<Responses>(roundFile(ctx, round, "responses"));
@@ -93,7 +98,7 @@ export function replay(ctx: RunContext): DebateState {
       else if (v.ruling === "modified" && v.outcome) decisions.apply(c.target, v.outcome, `Judge modified (${v.confidence} confidence): ${v.rationale}`);
     }
   }
-  return { decisions, rounds, open, cited };
+  return { decisions, rounds, open, cited, notes };
 }
 
 /** Every challenge and response about the same finding, oldest first. */

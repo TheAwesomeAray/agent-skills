@@ -15,10 +15,12 @@
           "severity": { "$ref": "common.json#/definitions/severity" },
           "reason": { "type": "string" },
           "recommendation": { "type": "string" },
-          "evidence": { "$ref": "common.json#/definitions/evidence" }
+          "evidence": { "$ref": "common.json#/definitions/evidence" },
+          "related": { "$ref": "common.json#/definitions/related" }
         }
       }
     },
+    "out_of_scope": { "$ref": "common.json#/definitions/out_of_scope" },
     "added": {
       "type": "array",
       "items": { "allOf": [{ "$ref": "common.json#/definitions/added_finding" }, { "required": ["evidence"] }] }

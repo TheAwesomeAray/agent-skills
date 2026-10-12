@@ -31,6 +31,7 @@ export async function assembleStep(ctx: RunContext): Promise<void> {
 
   const finalReview = { schema_version: 1, ...state.decisions.toReview() };
   writeJson(ctx.file("final-review.json"), finalReview);
+  if (state.notes.length > 0) writeJson(ctx.file("doubter-notes.json"), { schema_version: 1, notes: state.notes });
   const result = report(ctx, ctx.file("final-review.json"), ctx.file("SOLID-RISK-PROFILE.md"));
   if (result.code !== 0) throw new HarnessError(`The assembled review was rejected by the analyzer:\n- ${reportErrors(result).join("\n- ")}`, 2);
   ctx.manifest.ratings = parseRatings(result.stdout);
@@ -50,7 +51,7 @@ export async function reconcileStep(ctx: RunContext): Promise<void> {
   for (const item of updated.values()) saveItem(ctx.paths.registerDir, item);
   writeJson(ctx.file("register-changes.json"), { schema_version: 1, run_id: ctx.runId, matches: Object.fromEntries(matches), changes });
   writeText(path.join(ctx.paths.registerDir, "TECH-DEBT.md"),
-    renderTechDebt([...updated.values()], { runId: ctx.runId, commit: ctx.manifest.commit, ratings: ctx.manifest.ratings, changes }));
+    renderTechDebt([...updated.values()], { runId: ctx.runId, commit: ctx.manifest.commit, ratings: ctx.manifest.ratings, changes, outOfScope: review.out_of_scope }));
   const tally = (k: string) => changes.filter((c) => c.change === k).length;
   ctx.log(`Register: ${tally("add")} added, ${tally("update")} updated, ${tally("propose-resolved")} resolved, ${tally("reopen")} reopened, ${tally("carry")} carried.`);
 }
@@ -137,7 +138,17 @@ function prBody(ctx: RunContext): string {
   L();
   L(`${state.rounds.length} round(s), ${applied.length} challenge(s): ${tally("concede")} conceded, ${tally("revise")} revised, ${tally("defend")} defended. ${verdicts.length} went to the judge.`);
   for (const v of verdicts) L(`- \`${v.challenge_id}\` **${v.ruling}** (${v.confidence} confidence): ${v.rationale.replace(/\r?\n/g, " ").slice(0, 300)}`);
+  if (state.notes.length > 0) L(`${state.notes.length} doubter note(s) recorded without debate: \`${runRel}/doubter-notes.json\`.`);
   L();
+  const outOfScope = readJson<Review>(ctx.file("final-review.json")).out_of_scope ?? [];
+  if (outOfScope.length > 0) {
+    L("### Outside SOLID scope");
+    L();
+    L("Problems found during the review that are not design-principle issues. They do not affect the ratings or the register.");
+    L();
+    for (const o of outOfScope) L(`- **${o.category}**${o.severity ? ` (${o.severity})` : ""}: ${o.title} (\`${o.file}${o.line ? `:${o.line}` : ""}\`, reported by ${o.source ?? "analyst"})`);
+    L();
+  }
   L("### Register changes");
   L();
   const count = (k: string) => changes.filter((c) => c.change === k).length;

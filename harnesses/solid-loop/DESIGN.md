@@ -30,11 +30,12 @@ Status: implemented in `src/` (first version). Covers the analysis loop (analyze
 | Harness code | `agent-skills/harnesses/solid-loop/`. Run output never goes in this repo (it is public) |
 | Run output | Committed in the target repo under `.tech-debt/` |
 | Filing | Done by orchestrator code, never by an agent |
-| Doubter scope | Dispositions, missed violations, severity, recommendations, process. Not thresholds |
-| Doubter coverage | Every Critical/High decision, every dismissal, a sample of Medium/Low; at most 15 challenges per round, highest risk first |
-| Evidence | Both sides cite `file:line` for every claim; a claim without evidence loses by default |
+| Review scope | SOLID at the level of types and their members only. Every finding names one type in a `.cs` file. Project references, layering, solution structure, and other architecture concerns are not reviewed (a separate process will cover them). Security, correctness, concurrency, and performance problems are recorded as `out_of_scope` and never change SOLID severity |
+| Doubter scope | Dispositions, missed violations, severity, recommendations, process. Not thresholds. Only material challenges (section 4) |
+| Doubter coverage | Every Critical/High decision, every dismissal whose metric severity is at or above the materiality floor, a sample of Medium/Low; at most 15 challenges per round, highest risk first |
+| Evidence | Both sides cite `file:line` for every claim and every response, including concessions; a claim without evidence loses by default |
 | Analyst responses | Concede, revise, or defend with new evidence |
-| Rounds | Up to 3 rounds of challenge and defense; anything still disputed goes to a judge |
+| Rounds | Up to 3. A round after the first happens only when the analyst defended something, and it may only re-press those defended challenges. Anything still disputed goes to a judge |
 | Models (defaults) | Analyst: Claude Opus. Doubter: Claude Sonnet. Judge: Claude Opus with no prior context |
 | Human gate | Every run ends as a pull request into the target repo's base branch; merging it is the approval |
 | Register | One file per item plus a generated `TECH-DEBT.md`; execution agents can only claim a fix, a later analysis run confirms it |
@@ -94,6 +95,7 @@ Created once with `Agent.create` and reused via `agent.send` for the review and 
   - `concede`: the decision changes as the doubter proposed.
   - `revise`: a different change (e.g. severity moves one level instead of being dismissed). Must say what changed.
   - `defend`: the decision stands. Must cite evidence not already given; repeating an earlier argument is rejected by validation and treated as a concession.
+- Every response, including a concession, cites the code the analyst read to verify the challenge.
 
 ### Doubter (Claude Sonnet, one durable agent per run)
 
@@ -101,8 +103,11 @@ Durable across rounds so it remembers what it challenged and does not re-raise s
 
 - **Inputs:** the metrics, the analyst's review, the previous round's responses, and read-only access to the code in the worktree.
 - **Challenge types:** `disposition` (keep/dismiss/adjust is wrong), `missed` (a violation nobody reported), `severity`, `recommendation` (unsound or not actionable), `process` (a skipped step or an unverified claim).
-- **Coverage per round:** every Critical/High decision and every dismissal must be considered; Medium/Low are sampled. At most 15 challenges, ordered by risk. "Considered" does not mean "challenged": the doubter lists the items it checked and found sound, so coverage is auditable.
-- **After round 1:** only challenges the analyst defended, plus new issues the defenses revealed. Conceded or revised items are closed.
+- **Coverage in round 1:** every Critical/High decision and every dismissal at or above the materiality floor must be considered; Medium/Low are sampled. At most 15 challenges, ordered by risk. "Considered" does not mean "challenged": the doubter lists the items it checked and found sound, or records a `note`, so coverage is auditable.
+- **Materiality:** a challenge must change the risk picture, or validation rejects it. A change is material when it crosses the high/critical boundary, touches critical, or flips keep/dismiss on a finding kept at `debate.material_severity` (default medium) or above. Missed violations must be at least that severity. Moving a finding among dismissed, low, and medium is not material. Recommendation challenges must propose a replacement recommendation.
+- **Notes:** observations that are real but not material go in `notes` (target, note, evidence). They are kept in `doubter-notes.json` and counted in the PR, but never debated.
+- **Out of scope:** non-SOLID problems either side finds go in `out_of_scope`. They are deduplicated by file and title and listed in the report, the PR body, and `TECH-DEBT.md`.
+- **After round 1:** the next round happens only if the analyst defended at least one challenge, and the doubter may only re-press those (same target, new evidence) or let them go. New targets and new missed violations are rejected by validation; anything new goes in `notes`. Conceded or revised items are closed.
 - **Posture:** argue the strongest alternative, and propose a concrete outcome for every challenge ("dismiss DIP-004 because..."), never just "are you sure?".
 
 ### Judge (Claude Opus, fresh one-shot per run)
@@ -257,7 +262,7 @@ Three layers, later ones overriding earlier ones:
 ```json
 {
   "models": { "analyst": "claude-opus-5-5", "doubter": "claude-sonnet-5-5", "judge": "claude-opus-5-5", "matcher": "composer-2.5" },
-  "debate": { "max_rounds": 3, "max_challenges_per_round": 15, "medium_low_sample_rate": 0.25 },
+  "debate": { "max_rounds": 3, "max_challenges_per_round": 15, "medium_low_sample_rate": 0.25, "material_severity": "medium" },
   "retries": { "validation": 2, "startup": 3, "rejections_per_turn": 6 },
   "timeouts_minutes": { "analyst": 45, "doubter": 30, "judge": 20, "matcher": 5 },
   "git": { "host": "github", "remote": "origin", "base_branch": null, "pr_repo": null },
