@@ -1,0 +1,122 @@
+{
+  "_note": "Built 2026-10-13 at commit 6bc6ed0 from references/refactor-phase.md, references/workflow.md, src/refactor/run.ts, src/agents.ts. Refactor-phase agent steps are closures inside refactor() in src/refactor/run.ts; none is exported and the CLI has no resume-from-stage option, so only 'refactor-phase' and 'end-to-end' can be invoked without changing harness code. Agent seams below record what an isolated run would need.",
+  "seams": [
+    {
+      "id": "refactor-phase",
+      "kind": "stage",
+      "description": "Refactor phase for a fixed set of register items, from plan to local commit: planner plan, complexity gate, tester loop (tester, test gates, test auditor, coverage reviewer), auto-replayed approval, implementer with verify (and case A adapt), case C replace, reviewer, commit. No screening (--item), no push.",
+      "boundary": {
+        "input": "target repo at a pinned commit with its .tech-debt register, plus the item ids in the fixture",
+        "output": "<work_dir>/<harness-run-id>/out/manifest.json (per item outcome, turns with role, model, usage, duration, cost) and out/items/<id>/ (plan.json, tests.json, tests/, implementation-<n>.diff, verify-*.json, review.json); local branch refactor/<id>-<run>"
+      },
+      "fixtures": [".benchmark/fixtures/refactor-phase/"],
+      "invoke": "In a fresh clone of the target repo at the fixture's commit: npm run quality -- refactor --repo <clone> --item <ids from items.txt> --limit <count> --no-push --config configs/compare-<config>.json --set work_dir=<trial-dir>/work. Run the approval replayer from the fixture README beside it.",
+      "telemetry": "manifest.json items[].turns[] (role, step, status, duration_ms, usage, cost_usd per turn, recorded by src/agents.ts onTurn, including failed and timed-out runs) and <work_dir>/refactor-outcomes.jsonl by_role (model, turns, cost_usd, tokens, seconds per role). duration_s = sum of item seconds minus approval wait (approval-request.json to approval.json mtimes).",
+      "quality": [
+        { "name": "items_committed", "kind": "outcome", "weight": 2, "how": "share of fixture items whose manifest items[].outcome is 'committed' (passed verify, analyzer, and the Opus reviewer)" },
+        { "name": "implement_rounds", "kind": "rounds", "weight": 1, "how": "mean over items that reached implementation of 1 / attempts, attempts = count of implementation-<n>.diff files in out/items/<id>/; items that never reached implementation are excluded, items with plan-wrong count as 0; if no item in the trial reached implementation, the trial scores 0" },
+        { "name": "change_quality", "kind": "rubric", "weight": 3, "how": ".benchmark/fixtures/refactor-phase/rubric.md part A, max 10, graded blind on the final diff of each item reaching implementation; mean over items; 0 if no item produced a diff" },
+        { "name": "safety_net", "kind": "rubric", "weight": 2, "how": ".benchmark/fixtures/refactor-phase/rubric.md part B, max 8, graded blind on tests.json and tests/ of each item whose tests were accepted; mean over items; 0 if no item's tests were accepted" }
+      ]
+    },
+    {
+      "id": "implementer",
+      "kind": "agent",
+      "description": "Refactorer in implement mode (models.implementer) with its verify loop: applies an accepted plan in the sparse work tree, up to refactor.implement_attempts, with verification feedback in plain words. Differs between the configurations (Sonnet vs Opus).",
+      "boundary": { "input": "item, plan.json, gate.json, references.json, accepted tests (tests.json + tests/), baseline.json, target repo at the run's commit", "output": "implementation-<n>.diff, verify-<n>.json" },
+      "fixtures": [".benchmark/fixtures/implementer/"],
+      "invoke": "NOT ISOLATABLE without a harness change: implementAndVerify() is a closure inside refactor() in src/refactor/run.ts. Needs either an exported entry point or a CLI option to start an item from a saved plan and tests. Until then, measured inside 'refactor-phase' via implementer turns.",
+      "telemetry": "manifest.json items[].turns[] where role == 'implementer'",
+      "quality": [
+        { "name": "verified", "kind": "gate", "weight": 1, "how": "last verify-<n>.json has passed == true" },
+        { "name": "implement_rounds", "kind": "rounds", "weight": 1, "how": "1 / attempts (count of implementation-<n>.diff); plan-wrong scores 0" },
+        { "name": "change_quality", "kind": "rubric", "weight": 2, "how": ".benchmark/fixtures/implementer/rubric.md, max 10" }
+      ]
+    },
+    {
+      "id": "tester-loop",
+      "kind": "stage",
+      "description": "Characterization test loop: tester (Opus in both) submits, code gates run, test auditor (Composer) and coverage reviewer (models.coverage_reviewer: Sonnet vs Opus) accept or send back, up to retries.rejections_per_turn. The configs differ only in the coverage reviewer, which decides when the loop stops.",
+      "boundary": { "input": "item, plan.json, references.json, target repo at the run's commit", "output": "tests.json, tests/, test-gates.json" },
+      "fixtures": [".benchmark/fixtures/tester-loop/"],
+      "invoke": "NOT ISOLATABLE without a harness change: the tester turn and reviewCoverage() are inside attempt() in src/refactor/run.ts; --dry-run reaches it only after a fresh plan, so the input is not fixed. Measured inside 'refactor-phase' via tester, auditor, and coverage_reviewer turns.",
+      "telemetry": "manifest.json items[].turns[] where role in ('tester', 'auditor', 'coverage_reviewer'); number of tester 'tests' submissions",
+      "quality": [
+        { "name": "tests_accepted", "kind": "gate", "weight": 1, "how": "tests.json exists with outcome 'tests' and test-gates.json passed == true" },
+        { "name": "safety_net", "kind": "rubric", "weight": 2, "how": ".benchmark/fixtures/tester-loop/rubric.md, max 8" }
+      ]
+    },
+    {
+      "id": "test-maintainer-adapt",
+      "kind": "agent",
+      "description": "Case A: test_maintainer (Sonnet vs Opus) adapts existing tests that stop compiling after the refactoring, checked by code and the test-change reviewer (Composer). Only happens when the change breaks existing test code.",
+      "boundary": { "input": "verify work tree with the diff applied, build errors in test code", "output": "adapted test files, adaptation record in manifest" },
+      "fixtures": [".benchmark/fixtures/test-maintainer-adapt/"],
+      "invoke": "NOT ISOLATABLE without a harness change: adaptTests() is a closure inside refactor(). Measured inside 'refactor-phase' only when it triggers.",
+      "telemetry": "manifest.json items[].turns[] where role == 'test_maintainer' and step starts with 'adapt'",
+      "quality": [
+        { "name": "adapted_and_verified", "kind": "gate", "weight": 1, "how": "verify-<n>-adapted.json passed == true" }
+      ]
+    },
+    {
+      "id": "test-maintainer-replace",
+      "kind": "agent",
+      "description": "Case C: test_maintainer (Sonnet vs Opus) replaces needs_refactor tests with cheaper unit tests after verification, checked by gates, the test auditor, and the comparison reviewer (Composer). Only happens when the tester flagged tests.",
+      "boundary": { "input": "verified work tree, flagged tests", "output": "replacements.json, replace-gates.json" },
+      "fixtures": [".benchmark/fixtures/test-maintainer-replace/"],
+      "invoke": "NOT ISOLATABLE without a harness change: replaceFlagged() is a closure inside refactor(). Measured inside 'refactor-phase' only when it triggers.",
+      "telemetry": "manifest.json items[].turns[] where role == 'test_maintainer' and step starts with 'replace'",
+      "quality": [
+        { "name": "replaced_share", "kind": "outcome", "weight": 1, "how": "replaced tests / flagged tests, from manifest items[].replaced and needs_refactor" }
+      ]
+    },
+    {
+      "id": "screener",
+      "kind": "agent",
+      "description": "Composer one-shot complexity estimate per item. Same model in every configuration here.",
+      "boundary": { "input": "item + sparse production work tree", "output": "estimate cached in refactor-screens.jsonl" },
+      "fixtures": [],
+      "invoke": "npm run quality -- refactor --repo <clone> --select --config <config> (screens all open items; cached per item, commit, and model)",
+      "telemetry": "selection.json and manifest screening entries (turns, cost_usd)",
+      "quality": [
+        { "name": "estimate_matches_effective", "kind": "reference", "how": "1 if screened level equals the gate's effective complexity in a later run, else 0" }
+      ]
+    },
+    {
+      "id": "planner-plan",
+      "kind": "agent",
+      "description": "Planner (models.planner, Opus in both configs): plan.json with complexity, validated by checkPlan.",
+      "boundary": { "input": "item, criteria.md, vocabulary, complexity rubric, sparse work tree", "output": "plan.json, gate.json" },
+      "fixtures": [],
+      "invoke": "Only via refactor --item ... --dry-run (runs the tester too). No plan-only entry point.",
+      "telemetry": "manifest.json turns where role == 'planner' and step == 'plan' (role 'refactorer' in runs before the rename)",
+      "quality": [
+        { "name": "plan_valid", "kind": "gate", "how": "plan.json written (checkPlan accepted it)" }
+      ]
+    },
+    {
+      "id": "reviewer",
+      "kind": "agent",
+      "description": "Fresh Opus reviewer of the final diff (models.reviewer, Opus in both configs).",
+      "boundary": { "input": "item, plan, final diff, deviations, uncovered gaps", "output": "review.json" },
+      "fixtures": [],
+      "invoke": "NOT ISOLATABLE without a harness change: reviewChange() is a closure inside refactor().",
+      "telemetry": "manifest.json turns where role == 'reviewer'",
+      "quality": [
+        { "name": "verdict_recorded", "kind": "schema", "how": "review.json matches roles/reviewer/review.json" }
+      ]
+    },
+    {
+      "id": "end-to-end",
+      "kind": "end_to_end",
+      "description": "Whole harness: analysis phase (analyzer, analyst, doubter, judge, matcher, register PR) then refactor phase on the resulting register.",
+      "boundary": { "input": "target repo at a pinned commit", "output": "register PR from the analysis run, then refactor branches/PRs" },
+      "fixtures": [],
+      "invoke": "npm run quality -- run --repo <clone> --no-push --config <config>; then the refactor-phase invoke on the resulting register",
+      "telemetry": "analysis run directory event logs and per-agent usage; refactor manifest.json",
+      "quality": [
+        { "name": "items_committed", "kind": "outcome", "how": "share of attempted refactor items with outcome 'committed'" }
+      ]
+    }
+  ]
+}

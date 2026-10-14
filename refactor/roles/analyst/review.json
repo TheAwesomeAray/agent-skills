@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "required": ["executive_summary", "reviewed", "added", "recommendations"],
+  "properties": {
+    "executive_summary": { "type": "string", "minLength": 1 },
+    "application": { "type": "string" },
+    "reviewed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "action", "evidence"],
+        "properties": {
+          "id": { "type": "string", "description": "The finding's stable id (solid-xxxxxx)" },
+          "action": { "enum": ["keep", "dismiss", "adjust"] },
+          "severity": { "$ref": "../shared/common.json#/definitions/severity" },
+          "reason": { "type": "string" },
+          "recommendation": { "type": "string" },
+          "evidence": { "$ref": "../shared/common.json#/definitions/evidence" },
+          "related": { "$ref": "../shared/common.json#/definitions/related" }
+        }
+      }
+    },
+    "added": {
+      "type": "array",
+      "items": { "allOf": [{ "$ref": "../shared/common.json#/definitions/added_finding" }, { "required": ["evidence"] }] }
+    },
+    "recommendations": { "type": "array", "items": { "type": "string" } },
+    "register_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "evidence"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "enum": ["present", "fixed"] },
+          "evidence": { "$ref": "../shared/common.json#/definitions/evidence" }
+        }
+      }
+    }
+  }
+}

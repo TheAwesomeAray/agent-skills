@@ -1,0 +1,50 @@
+{
+  "models": {
+    "analyst": "claude-opus-5-5",
+    "doubter": "claude-sonnet-5-5",
+    "judge": "claude-opus-5-5",
+    "matcher": "composer-2.5",
+    "screener": "composer-2.5",
+    "planner": "claude-opus-5-5",
+    "tester": "claude-opus-5-5",
+    "auditor": "composer-2.5",
+    "reviewer": "claude-opus-5-5",
+    "implementer": "claude-sonnet-5-5",
+    "test_maintainer": "claude-sonnet-5-5",
+    "coverage_reviewer": "claude-sonnet-5-5"
+  },
+  "debate": { "max_rounds": 3, "max_challenges_per_round": 15, "medium_low_sample_rate": 0.25, "material_severity": "medium" },
+  "retries": { "validation": 2, "startup": 3, "rejections_per_turn": 6 },
+  "timeouts_minutes": { "analyst": 45, "doubter": 30, "judge": 20, "matcher": 5, "screener": 5, "planner": 30, "tester": 60, "auditor": 5, "reviewer": 20, "implementer": 30, "test_maintainer": 60, "coverage_reviewer": 10 },
+  "heartbeat": { "inactivity_minutes": 5, "restarts": 2 },
+  "git": { "host": "github", "remote": "origin", "base_branch": null, "pr_repo": null },
+  "work_dir": null,
+  "analysis": "solid",
+  "lenses": {
+    "solid": {
+      "dir": "../lenses/solid",
+      "id_prefix": "solid",
+      "references": ["LENS.md", "references/criteria.md"],
+      "analyze": ["dotnet", "run", "{lens}/scripts/solid-analyzer.cs", "--", "analyze", "{worktree}", "--out", "{metrics}", "--register", "{register}"],
+      "report": ["dotnet", "run", "{lens}/scripts/solid-analyzer.cs", "--", "report", "--metrics", "{metrics}", "--review", "{review}", "--out", "{out}"]
+    }
+  },
+  "refactor": {
+    "complexity_limit": 2,
+    "screen_concurrency": 4,
+    "max_tests_per_item": 10,
+    "determinism_runs": 3,
+    "test_projects": [],
+    "test_dirs": [],
+    "approval_risk": "medium",
+    "approval_timeout_minutes": 240,
+    "implement_attempts": 2,
+    "caller_threshold": 5,
+    "run_label": "",
+    "toolchain": { "dotnet_root": null, "sdk": null, "env": {}, "build_args": ["-p:NuGetAudit=false"] }
+  },
+  "pricing": {
+    "claude-opus-5-5": { "input": 4, "cache_write": 5, "cache_read": 0.2, "output": 20 },
+    "claude-sonnet-5-5": { "input": 2, "cache_write": 2.5, "cache_read": 0.1, "output": 10 }
+  }
+}

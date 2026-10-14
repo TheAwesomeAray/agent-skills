@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["item_id", "level", "approach", "files", "reasons"],
+  "properties": {
+    "item_id": { "type": "string", "minLength": 1 },
+    "level": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Estimated complexity of the smallest real fix, from the rubric" },
+    "approach": { "type": "string", "minLength": 1, "description": "One or two sentences: the smallest change that really resolves the finding" },
+    "files": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Production files that change would likely touch, repository-relative" },
+    "reasons": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Code facts behind the level, e.g. 'IOrderRepository exists, is registered in Startup.cs:88, and has every member used'" }
+  }
+}

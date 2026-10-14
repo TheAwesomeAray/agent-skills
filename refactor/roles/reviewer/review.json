@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "required": ["verdict", "resolved", "findings", "summary"],
+  "properties": {
+    "verdict": { "enum": ["approve", "reject"], "description": "approve = the change removes the problem the finding describes, without gaming its metric, and nothing you found should stop the pull request; reject = at least one blocking finding" },
+    "resolved": {
+      "type": "object",
+      "required": ["verdict", "evidence"],
+      "properties": {
+        "verdict": { "enum": ["yes", "no"], "description": "yes = the design problem the finding describes is gone from the code, not just the number that measured it" },
+        "evidence": { "type": "string", "minLength": 1, "description": "Where in the diff the problem is removed, citing file and line, or why it is still there" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "Every problem you found; empty when there are none",
+      "items": {
+        "type": "object",
+        "required": ["kind", "blocking", "file", "detail"],
+        "properties": {
+          "kind": { "enum": ["metric-gaming", "not-resolved", "behavior-change", "uncovered-risk", "deviation", "other"], "description": "metric-gaming = the measured value drops but the problem remains, moved or hidden; not-resolved = the change does not address the problem; behavior-change = the diff changes what callers observe; uncovered-risk = a gap the tester disclosed is touched by the diff in a way that could break; deviation = a departure from the plan that is not justified; other = anything else a reviewer must know" },
+          "blocking": { "type": "boolean", "description": "true = the pull request should not open with this; false = worth mentioning to the human reviewer" },
+          "file": { "type": "string", "minLength": 1, "description": "Repository-relative path the finding is about" },
+          "line": { "type": "integer", "minimum": 1 },
+          "detail": { "type": "string", "minLength": 1, "description": "What is wrong and why it matters, concretely" }
+        }
+      }
+    },
+    "summary": { "type": "string", "minLength": 1, "description": "Two or three sentences for the pull request: what the change does and your verdict" }
+  }
+}

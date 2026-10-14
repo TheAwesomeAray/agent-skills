@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "required": ["verdict", "findings"],
+  "properties": {
+    "verdict": { "enum": ["sufficient", "insufficient"], "description": "sufficient = every realistic way a mistake in the plan's steps could change behavior is caught by a test, or honestly explained and reflected in the risk rating, and every test is in scope" },
+    "findings": {
+      "type": "array",
+      "description": "Every problem that makes the tests insufficient; empty when sufficient",
+      "items": {
+        "type": "object",
+        "required": ["kind", "subject", "detail"],
+        "properties": {
+          "kind": { "enum": ["missing-breakage", "out-of-scope", "mapping-wrong", "reason-rejected", "risk-understated"], "description": "missing-breakage = a realistic breakage is not listed, or not tested where it must be; out-of-scope = a test guards behavior no mistake in the plan's steps could change, and should be dropped; mapping-wrong = the listed tests would not fail if what they are mapped to broke; reason-rejected = a not_covered reason does not hold; risk-understated = the risk rating or its uncovered list claims more protection than the tests give" },
+          "subject": { "type": "string", "minLength": 1, "description": "The breakage, plan point, or test concerned" },
+          "detail": { "type": "string", "minLength": 1, "description": "What is missing or wrong, and the test that would close the gap or the test to drop" }
+        }
+      }
+    }
+  }
+}

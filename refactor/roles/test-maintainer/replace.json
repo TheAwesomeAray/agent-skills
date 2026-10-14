@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "required": ["replacements"],
+  "properties": {
+    "replacements": {
+      "type": "array",
+      "description": "One entry per flagged test: a replacement test, or why one is still not possible",
+      "items": {
+        "type": "object",
+        "required": ["replaces"],
+        "properties": {
+          "replaces": { "type": "string", "description": "Fully qualified name of the flagged test, as listed" },
+          "test": {
+            "type": "object",
+            "description": "The cheaper unit test that replaces it",
+            "required": ["name", "file", "kind", "behavior", "protects", "why", "characterizes_suspected_bug", "sabotage"],
+            "properties": {
+              "name": { "type": "string", "description": "Fully qualified test method name: Namespace.Class.Method" },
+              "file": { "type": "string", "pattern": "\\.[cC][sS]$", "description": "New test file you wrote, relative to the repository root" },
+              "kind": { "enum": ["unit"] },
+              "behavior": { "type": "string", "minLength": 1, "description": "The observable behavior the test pins, in plain words; the same behavior the flagged test pins" },
+              "protects": { "type": "string", "minLength": 1 },
+              "why": { "type": "string", "minLength": 1 },
+              "characterizes_suspected_bug": { "type": "boolean" },
+              "sabotage": {
+                "type": "object",
+                "required": ["file", "find", "replace"],
+                "description": "A small change to production code, as it is now, that breaks the protected behavior; the test must fail with it applied",
+                "properties": {
+                  "file": { "type": "string", "pattern": "\\.[cC][sS]$" },
+                  "find": { "type": "string", "minLength": 1, "description": "Exact text that occurs once in the file" },
+                  "replace": { "type": "string" }
+                }
+              }
+            }
+          },
+          "not_possible": {
+            "type": "object",
+            "required": ["reason", "after_refactor"],
+            "description": "When no cheaper test can reach the behavior even now; the flagged test stays",
+            "properties": {
+              "reason": { "type": "string", "minLength": 1, "description": "Why a cheaper test is still not possible on the refactored code" },
+              "after_refactor": { "type": "string", "minLength": 1, "description": "What would make it possible" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

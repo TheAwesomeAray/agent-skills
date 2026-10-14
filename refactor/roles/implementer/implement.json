@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "required": ["outcome", "summary"],
+  "properties": {
+    "outcome": { "enum": ["implemented", "plan-wrong"], "description": "implemented = the plan is applied and the code builds; plan-wrong = the plan cannot be applied as written" },
+    "summary": { "type": "string", "minLength": 1, "description": "What you changed, step by step, in plain words" },
+    "deviations": { "type": "array", "items": { "type": "string" }, "description": "Anything you did differently from the plan's step details, and why" },
+    "plan_problem": { "type": "string", "description": "Required when outcome is plan-wrong: what in the plan does not hold, and what a correct plan would need" }
+  }
+}

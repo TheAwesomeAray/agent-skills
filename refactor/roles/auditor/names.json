@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "required": ["verdicts"],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "verifies", "verdict", "reason"],
+        "properties": {
+          "name": { "type": "string", "description": "Fully qualified test method name, as given" },
+          "verifies": { "type": "string", "minLength": 1, "description": "What the test body actually checks, read from its assertions" },
+          "verdict": { "enum": ["match", "mismatch"], "description": "match = the test name and the declared behavior both describe what the body checks" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

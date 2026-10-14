@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["outcome", "summary"],
+  "properties": {
+    "outcome": { "enum": ["adapted", "escalate"], "description": "adapted = the broken tests compile against the new code and check what they checked before; escalate = that is not possible without changing what a test checks" },
+    "summary": { "type": "string", "minLength": 1, "description": "What you changed in each file, in a sentence or two" },
+    "reason": { "type": "string", "description": "Required when outcome is escalate: which test cannot be adapted and why" }
+  }
+}

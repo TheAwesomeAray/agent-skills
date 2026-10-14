@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "required": ["verdicts"],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "description": "One verdict per listed test",
+      "items": {
+        "type": "object",
+        "required": ["name", "verdict", "reason"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "The test's fully qualified name, as listed" },
+          "verdict": { "enum": ["relevant", "irrelevant"], "description": "relevant = a realistic mistake in a line this diff adds or removes would make the test fail; irrelevant = the test would pass whatever those lines said, so it guards code the change did not touch" },
+          "changed_line": { "type": "string", "description": "Required when relevant: one line the diff adds or removes, copied exactly, that the test guards" },
+          "mistake": { "type": "string", "description": "Required when relevant: a realistic way that line could have been written wrong, and why the test would then fail" },
+          "reason": { "type": "string", "minLength": 1, "description": "One sentence for the pull request: what the test guards, and why that is or is not something this change could have broken" }
+        }
+      }
+    }
+  }
+}

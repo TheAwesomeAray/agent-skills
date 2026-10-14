@@ -6,15 +6,9 @@ A library of agent skills for Cursor and Claude. Each folder is a self-contained
 
 | Skill | Description |
 |---|---|
-| [evaluating-solid-principles](evaluating-solid-principles/SKILL.md) | Evaluates a C# / .NET repository for SOLID violations against configurable per-criterion thresholds and produces a Markdown risk profile (Low/Medium/High/Critical per principle and overall). Requires the .NET 10 SDK. |
-
-## Harnesses
-
-Programs that run skills with several cooperating agents through the [Cursor SDK](https://cursor.com/docs/sdk/typescript).
-
-| Harness | Description |
-|---|---|
-| [quality](harnesses/quality/DESIGN.md) | Code quality harness. The analysis phase runs `evaluating-solid-principles` with an analyst agent, a doubter agent that challenges its review, and a judge for unresolved disputes, then records the result in a technical debt register committed to the target repo and proposes it as a pull request. The fix phase ([design](harnesses/quality/FIX-DESIGN.md), in progress) resolves register items with test-protected refactorings. Requires Node 24, the .NET 10 SDK, the GitHub CLI, and `CURSOR_API_KEY`. |
+| [benchmark](benchmark/SKILL.md) | Benchmarks multi-agent systems for cost, time, and quality. Finds seams between agents and stages to test separately, runs them and the end-to-end workflow across configurations, and writes a Markdown report in a per-system standard format (`.benchmark/standard.json`), committed through a pull request. Requires Node 18+ and the GitHub CLI. |
+| [refactor](refactor/SKILL.md) | Behavior-preserving technical debt reduction with a multi-agent harness on the [Cursor SDK](https://cursor.com/docs/sdk/typescript). The find phase analyzes the code through a lens (SOLID for C# today) with an analyst, a doubter, and a judge, and proposes a technical debt register as a pull request. The fix phase resolves register items one at a time: characterization tests first, then a planned refactoring, verification, review, and a pull request per item. Requires Node 24, the .NET 10 SDK, the GitHub CLI, and `CURSOR_API_KEY`. |
+| [evaluating-solid-principles](evaluating-solid-principles/SKILL.md) | A quick SOLID risk profile for a C# / .NET repository (Low/Medium/High/Critical per principle and overall), using the `refactor` skill's SOLID lens with no register or code changes. Install it alongside `refactor`. Requires the .NET 10 SDK. |
 
 ## Installing a skill
 

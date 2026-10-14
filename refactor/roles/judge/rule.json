@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "required": ["verdicts"],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["challenge_id", "ruling", "rationale", "confidence"],
+        "properties": {
+          "challenge_id": { "type": "string" },
+          "ruling": { "enum": ["upheld", "overturned", "modified"] },
+          "outcome": { "anyOf": [{ "$ref": "../shared/common.json#/definitions/outcome" }, { "type": "null" }] },
+          "rationale": { "type": "string", "minLength": 1 },
+          "confidence": { "enum": ["high", "medium", "low"] }
+        }
+      }
+    }
+  }
+}

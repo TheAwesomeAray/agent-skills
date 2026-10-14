@@ -1,0 +1,87 @@
+{
+  "type": "object",
+  "required": ["item_id", "goal", "resolution", "steps", "files", "new_types", "public_surface_changes", "callers", "behavior_notes", "change_points", "touches", "complexity", "risks"],
+  "properties": {
+    "item_id": { "type": "string", "minLength": 1 },
+    "goal": { "type": "string", "minLength": 1, "description": "One sentence: what the code looks like after the change" },
+    "resolution": {
+      "type": "object",
+      "required": ["criterion", "expected"],
+      "properties": {
+        "criterion": { "type": "string", "description": "The finding's criterion, e.g. concrete_instantiations" },
+        "expected": { "enum": ["absent", "lower_severity"] },
+        "expected_severity": { "enum": ["low", "medium", "high"], "description": "Required when expected is lower_severity" }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["refactoring", "files", "detail"],
+        "properties": {
+          "refactoring": { "type": "string", "description": "A name from the refactoring vocabulary, spelled exactly" },
+          "files": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "files": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "\\.[cC][sS]$" }, "description": "Every production file the change may touch, including new files it creates (repository-relative)" },
+    "new_types": { "type": "array", "items": { "type": "string" }, "description": "Fully qualified names of types or interfaces the change creates; empty if none" },
+    "public_surface_changes": { "type": "array", "items": { "type": "string" }, "description": "Public or protected members added, removed, or changed in signature; empty if none" },
+    "callers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "line", "kind", "note"],
+        "properties": {
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "kind": { "enum": ["call", "di"], "description": "di = a dependency injection registration or framework activation, not a direct call" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "behavior_notes": { "type": "string", "minLength": 1, "description": "Why observable behavior stays the same" },
+    "change_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["type", "member", "note"],
+        "properties": { "type": { "type": "string" }, "member": { "type": "string" }, "note": { "type": "string" } }
+      }
+    },
+    "touches": {
+      "type": "object",
+      "required": ["async", "threading", "static_state", "persistence"],
+      "properties": {
+        "async": { "type": "boolean", "description": "The change edits async code paths or their awaits" },
+        "threading": { "type": "boolean" },
+        "static_state": { "type": "boolean", "description": "The change edits static mutable state" },
+        "persistence": { "type": "boolean", "description": "The change edits a DbContext, entity configuration, mapping, or migration" }
+      }
+    },
+    "complexity": {
+      "type": "object",
+      "required": ["level", "reasons"],
+      "properties": {
+        "level": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "reasons": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "renames": {
+      "type": "array",
+      "description": "Test-code refactorings only: every test method whose fully qualified name changes (moved to another class or namespace, or renamed). Leave out for production code.",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string", "description": "Namespace.Class.Method before" },
+          "to": { "type": "string", "description": "Namespace.Class.Method after" }
+        }
+      }
+    }
+  }
+}

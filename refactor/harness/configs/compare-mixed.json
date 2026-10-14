@@ -1,0 +1,19 @@
+{
+  "work_dir": "C:/Users/326319/AppData/Local/Temp/quality-compare",
+  "models": {
+    "implementer": "claude-sonnet-5-5",
+    "test_maintainer": "claude-sonnet-5-5",
+    "coverage_reviewer": "claude-sonnet-5-5"
+  },
+  "refactor": {
+    "run_label": "mixed",
+    "approval_risk": "high",
+    "test_projects": [
+      "UnitTests/CRM.Domain.UnitTests.csproj",
+      "CRM.Reports.UnitTests/CRM.Reports.UnitTests.csproj",
+      "IntegrationTests/CRM.IntegrationTests.csproj"
+    ],
+    "test_dirs": ["UnitTests", "CRM.Reports.UnitTests", "IntegrationTests", "FunctionalTests", "TestHelpers", "XUnitTestProject1"],
+    "toolchain": { "dotnet_root": "%LOCALAPPDATA%/quality/dotnet", "sdk": "8.0.425" }
+  }
+}

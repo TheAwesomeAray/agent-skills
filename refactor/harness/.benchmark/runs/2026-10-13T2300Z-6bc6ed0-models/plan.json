@@ -1,0 +1,29 @@
+{
+  "run_id": "2026-10-13T2300Z-6bc6ed0-models",
+  "label": "models",
+  "system_commit": "6bc6ed0",
+  "baseline_config": "opus",
+  "configs": [
+    { "name": "opus", "description": "Implementer, test maintainer, and coverage reviewer on Claude Opus 5.5; everything else as harness.config.json", "settings": { "config_file": "configs/compare-opus.json" } },
+    { "name": "mixed", "description": "Implementer, test maintainer, and coverage reviewer on Claude Sonnet 5.5 (harness default); everything else identical", "settings": { "config_file": "configs/compare-mixed.json" } }
+  ],
+  "seams": ["refactor-phase"],
+  "skipped_seams": {
+    "implementer": "Differs between configs, but cannot be isolated without adding an entry point to src/refactor/run.ts. Measured inside refactor-phase from implementer turns; isolate it only if the user agrees to the harness change.",
+    "tester-loop": "Differs only in the coverage reviewer; same isolation problem. Measured inside refactor-phase.",
+    "test-maintainer-adapt": "Differs between configs; only triggers when a diff breaks existing tests; not isolatable. Measured inside refactor-phase when it happens.",
+    "test-maintainer-replace": "Differs between configs; only triggers when the tester flags needs_refactor tests; not isolatable. Measured inside refactor-phase when it happens.",
+    "screener": "Same model (Composer 2.5) in both configs, and --item skips screening.",
+    "refactorer-plan": "Same model (Opus) in both configs.",
+    "reviewer": "Same model (Opus) in both configs; its verdict feeds items_committed.",
+    "end-to-end": "The analysis phase uses the same models in both configs; running it would add cost and noise without bearing on the question. refactor-phase is the end-to-end run for the part that changes."
+  },
+  "trials": { "seam": 3, "end_to_end": 2 },
+  "grader": "gpt-5.6-sol-medium, one grader for all trials, blind (opaque ids, shuffled), rubric .benchmark/fixtures/refactor-phase/rubric.md parts A and B. A non-Claude grader avoids judging Opus against Sonnet with a Claude model.",
+  "estimate": {
+    "cost_usd": null,
+    "minutes": null,
+    "basis": "No prior refactor runs exist, so no per-trial data. Plan: run trial 1 of each config as a pilot (2 items each), read cost and time from manifest.json, extrapolate to 3 trials x 2 configs, and confirm with the user before trials 2 and 3. Worst case per item is bounded only by harness timeouts (refactorer 30, tester 60 per turn with up to 6 rejections, implementer 30 per attempt x 2, test_maintainer 60, reviewer 20 minutes). Composer 2.5 turns (auditor, test-change and comparison reviewers) have no price in harness.config.json, so cost excludes them unless the user supplies one."
+  },
+  "publish": "pr"
+}

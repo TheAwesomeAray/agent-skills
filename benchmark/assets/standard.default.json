@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "system": "",
+  "trials": {
+    "seam": 3,
+    "end_to_end": 2
+  },
+  "pricing_usd_per_million_tokens": {},
+  "thresholds": {
+    "cost_pct": 10,
+    "time_pct": 15,
+    "quality_points": 5,
+    "success_rate_points": 10
+  },
+  "report": {
+    "title": "Benchmark report",
+    "sections": ["summary", "configurations", "end_to_end", "seams", "comparison", "observations", "recommendations", "method"],
+    "per_trial_table": false
+  },
+  "publish": {
+    "mode": "pr",
+    "branch_prefix": "benchmark/",
+    "base": ""
+  }
+}

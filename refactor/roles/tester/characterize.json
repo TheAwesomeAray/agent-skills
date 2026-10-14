@@ -1,0 +1,97 @@
+{
+  "type": "object",
+  "required": ["outcome"],
+  "properties": {
+    "outcome": { "enum": ["tests", "escalate"], "description": "tests = the tests below are ready for the gates; escalate = robust tests are not possible at this complexity" },
+    "escalation": {
+      "type": "object",
+      "required": ["proposed_complexity", "reason"],
+      "properties": {
+        "proposed_complexity": { "type": "integer", "minimum": 2, "maximum": 5 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["level", "uncovered", "reasoning"],
+      "description": "Required when outcome is tests. How much of what the refactoring could break the tests protect",
+      "properties": {
+        "level": { "enum": ["low", "medium", "high"], "description": "low = every way the change could break behavior, and every plan point, is covered by a test that survives the refactoring; medium = gaps a reviewer of the diff would likely catch; high = an uncovered breakage would likely reach production" },
+        "uncovered": { "type": "array", "items": { "type": "string" }, "description": "Each breakage or plan point no test covers, in plain words" },
+        "reasoning": { "type": "string", "minLength": 1, "description": "Why the level is what it is: what is protected, what is not, and why the gaps could not be closed without changing production code" },
+        "proposed_complexity": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Set when the item is harder to protect than its complexity rating suggests" }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["breakages", "plan_points"],
+      "description": "Required when outcome is tests. How the tests cover what the change could break",
+      "properties": {
+        "breakages": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Every realistic way a mistake in carrying out the plan would change observable behavior, from each step's 'Can break' notes applied to this code. Behavior the plan does not touch is not listed, however important it is",
+          "items": {
+            "type": "object",
+            "required": ["name", "step", "tests"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "description": "The mistake and what it would break, in plain words, e.g. 'IEstimateRepository is not registered, so the handler cannot be created and every estimate email fails'" },
+              "step": { "type": "string", "pattern": "^steps\\[\\d+\\]$", "description": "The plan step a mistake would come from, e.g. steps[0]" },
+              "tests": { "type": "array", "items": { "type": "string" }, "description": "Fully qualified names of the declared tests that would fail if it happened" },
+              "not_covered": { "type": "string", "description": "Why no test that survives the refactoring can catch it; any uncovered breakage means the risk is not low" }
+            }
+          }
+        },
+        "plan_points": {
+          "type": "array",
+          "description": "One entry for every element of the plan's change_points and risks",
+          "items": {
+            "type": "object",
+            "required": ["ref", "tests"],
+            "properties": {
+              "ref": { "type": "string", "pattern": "^(change_points|risks)\\[\\d+\\]$", "description": "e.g. change_points[0] or risks[1]" },
+              "tests": { "type": "array", "items": { "type": "string" } },
+              "not_covered": { "type": "string", "description": "Why no test covers it" }
+            }
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "file", "kind", "behavior", "protects", "why", "characterizes_suspected_bug", "sabotage"],
+        "properties": {
+          "name": { "type": "string", "description": "Fully qualified test method name: Namespace.Class.Method" },
+          "file": { "type": "string", "pattern": "\\.[cC][sS]$", "description": "Test file you wrote, relative to the repository root" },
+          "kind": { "enum": ["unit", "integration"], "description": "unit = the class or method under test with fakes for injectable dependencies, no database, container, or mediator; integration = anything larger: the wiring test, or a test flagged needs_refactor" },
+          "wiring": { "type": "boolean", "description": "true only for the single wiring test per item: it builds the real container, resolves the changed type through its entry point, and asserts an outcome only the correct implementation, sharing the request's state, produces" },
+          "needs_refactor": {
+            "type": "object",
+            "required": ["reason", "after_refactor"],
+            "description": "Required on every integration test that is not the wiring test. Marks a test that is valid before and after the refactoring but expensive to keep (a database, the container, the mediator, or long setup), written because no cheaper test can reach the behavior today. It is rewritten after the implementation",
+            "properties": {
+              "reason": { "type": "string", "minLength": 1, "description": "Why a cheaper test is not possible on the current code: the missing seam, e.g. 'repositories are created with new from CRMContext inside the constructor'" },
+              "after_refactor": { "type": "string", "minLength": 1, "description": "The cheaper test that should replace it once the refactoring creates the seam, e.g. 'construct with a fake IOpportunityRepository whose GetById throws for deleted records'" }
+            }
+          },
+          "behavior": { "type": "string", "minLength": 1, "description": "The observable behavior the test pins, in plain words (no test or code names)" },
+          "protects": { "type": "string", "minLength": 1, "description": "The mistake in carrying out the plan that this test catches, and the step it would come from" },
+          "why": { "type": "string", "minLength": 1, "description": "Why breaking this behavior would matter" },
+          "characterizes_suspected_bug": { "type": "boolean" },
+          "sabotage": {
+            "type": "object",
+            "required": ["file", "find", "replace"],
+            "description": "A small change to production code that breaks the protected behavior; the test must fail with it applied",
+            "properties": {
+              "file": { "type": "string", "pattern": "\\.[cC][sS]$" },
+              "find": { "type": "string", "minLength": 1, "description": "Exact text that occurs once in the file" },
+              "replace": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
